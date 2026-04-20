@@ -1,18 +1,18 @@
 import random
 from dataclasses import dataclass
 
-from .models.faction import Faction, FactionAction, DiseaseType, ActiveDisease
+from .models.characters import Character, CharacterTick
+from .models.faction import Faction, Action, DiseaseType, ActiveDisease
 from .models.hex import Hex
 from .models.ticks import Tick, HexTick, FactionTick
 from .models.settings import WorldSettings
 from .utils import modifier, hex_distance
 
-HEX_RESOURCE_TICK_MODIFIER = 5
 
 
 @dataclass
 class ActionResult:
-    action: FactionAction
+    action: Action
     dice_roll: int | None = None
     success: bool = True
     notes: str = ''
@@ -33,7 +33,7 @@ def _select_action(
             f for f in nearby_factions
             if f.current_hex == faction.current_hex
             and f.agreeableness < 50
-            and faction.last_action != FactionAction.BATTLE
+            and faction.last_action != Action.BATTLE
         ]
         if blocking:
             detour = min(
@@ -53,7 +53,7 @@ def _select_action(
     if in_range:
         closest = min(in_range, key=lambda f: hex_distance(hex, f.current_hex))
         outmatched = faction.combat_skill < closest.combat_skill
-        if faction.last_action != FactionAction.BATTLE and faction.agreeableness < 50:
+        if faction.last_action != Action.BATTLE and faction.agreeableness < 50:
             if faction.current_hex == closest.current_hex:
                 return battle(faction, closest)
             else:
@@ -70,7 +70,7 @@ def _select_action(
                 return travel(faction, best)
         elif faction.agreeableness < 0 and faction.combat_skill >= closest.combat_skill:
             return battle(faction, closest)
-        elif closest.agreeableness >= 0 and faction.last_action != FactionAction.TRADE:
+        elif closest.agreeableness >= 0 and faction.last_action != Action.TRADE:
             return trade(faction, closest)
         else:
             return battle(faction, closest)
@@ -89,10 +89,10 @@ def _select_action(
                 return travel(faction, best)
 
     # Delve if there's a dungeon, resources cover next round, and theology check passes
-    dungeon = next((p for p in (hex.points_of_interest or []) if isinstance(p, dict) and p.get('type') == 'dungeon'), None)
+    dungeon = hex.pois.filter(poi_type='dungeon').first()
     if dungeon and faction.resources > faction.population:
         if random.randint(1, 12) - modifier(faction.theology) >= 9:
-            return delve(faction, dungeon.get('difficulty', 10))
+            return delve(faction, dungeon)
 
     # Craft or train based on tech headroom
     if faction.resources > faction.population and (faction.technology_max - faction.technology) > 10:
@@ -164,17 +164,121 @@ def tick_faction(
     )
 
 
+# --- Character ---
+
+def _character_select_action(
+    character: Character,
+    factions_on_hex: list[Faction],
+) -> tuple[str, str]:
+    """Returns (action_label, notes)."""
+    if character.destination:
+        return _character_travel(character)
+
+    if character.rations < character.ration_limit // 2:
+        return _character_supply(character)
+
+    if not character.is_scout and character.can_merge:
+        target = next(
+            (
+                f for f in factions_on_hex
+                if f.agreeableness > 50
+                and f.resources > f.population
+                and (character.faction.agreeableness if character.faction else 0) + f.agreeableness > 100
+            ),
+            None,
+        )
+        if target:
+            return _character_merge(character, target)
+
+    return 'idle', ''
+
+
+def _character_travel(character: Character) -> tuple[str, str]:
+    cost = character.destination.terrain_difficulty
+    character.speed -= cost
+    character.current_hex = character.destination
+    if character.current_hex == character.destination:
+        character.destination = None
+    character.save()
+    return Action.TRAVEL, f"moved to {character.current_hex}"
+
+
+def _character_supply(character: Character) -> tuple[str, str]:
+    gained = character.resource_generation
+    character.rations = min(character.rations + gained, character.ration_limit)
+    character.save()
+    return Action.SUPPLY, f"+{gained} rations"
+
+
+def _character_merge(character: Character, target: Faction) -> tuple[str, str]:
+    old_faction = character.faction
+    character.faction = target
+    target.population += 1
+    target.save()
+    character.save()
+    return Action.MERGE, f"joined {target} (left {old_faction})"
+
+
+def update_character_visibility(character: Character, all_hexes: list[Hex]) -> None:
+    """Mark hexes visible based on character scouting. No-op if scouting == 0."""
+    if not character.scouting or not character.current_hex:
+        return
+    depth = modifier(character.scouting)
+    for hex in all_hexes:
+        if hex_distance(character.current_hex, hex) <= depth:
+            if not hex.player_explored:
+                hex.player_explored = True
+                hex.save()
+
+
+def tick_character(
+    character: Character,
+    tick: Tick,
+    factions_on_hex: list[Faction],
+) -> CharacterTick:
+    action = None
+    notes = ''
+
+    if not character.is_dead and character.is_wanderer:
+        action, notes = _character_select_action(character, factions_on_hex)
+
+    if tick.number % 3 == 0:
+        character.speed = character.max_speed
+        character.rations = max(0, character.rations - 1)
+        if character.rations == 0:
+            character.famine_streak += 1
+        else:
+            character.famine_streak = 0
+        if character.famine_streak >= 5:
+            character.is_dead = True
+        character.save()
+
+    return CharacterTick.objects.create(
+        tick=tick,
+        character=character,
+        rations=character.rations,
+        famine_streak=character.famine_streak,
+        speed=character.speed,
+        is_dead=character.is_dead,
+        is_wanderer=character.is_wanderer,
+        destination=character.destination,
+        current_hex=character.current_hex,
+        action=action,
+        notes=notes,
+    )
+
+
 # --- Hex ---
 
 def tick_hex(hex: Hex, tick: Tick) -> HexTick:
-    hex.resources += hex.resource_generation * HEX_RESOURCE_TICK_MODIFIER
-    hex.save()
+    if tick.number % 3 == 0:
+        hex.resources += hex.resource_generation * WorldSettings.get().hex_resource_tick_modifier
+        hex.save()
     return HexTick.objects.create(
         tick=tick,
         hex=hex,
         terrain_type=hex.terrain_type,
         resources=hex.resources,
-        points_of_interest=hex.points_of_interest,
         weather=hex.weather,
         encounter_likelihood=hex.encounter_likelihood,
         player_explored=hex.player_explored,
@@ -190,7 +294,7 @@ def supply(faction: Faction, hex: Hex) -> ActionResult:
     hex.resources -= modifier(faction.resource_generation)
     faction.save()
     hex.save()
-    return ActionResult(action=FactionAction.SUPPLY, notes=f"+{amount} resources")
+    return ActionResult(action=Action.SUPPLY, notes=f"+{amount} resources")
 
 
 def _roll_disease() -> DiseaseType:
@@ -324,7 +428,7 @@ def travel(faction: Faction, destination: Hex) -> ActionResult:
     notes = f"moved to {destination} (cost {cost})"
     if encounter_note:
         notes += f"; {encounter_note}"
-    return ActionResult(action=FactionAction.TRAVEL, notes=notes)
+    return ActionResult(action=Action.TRAVEL, notes=notes)
 
 
 def trade(faction: Faction, other: Faction) -> ActionResult:
@@ -351,7 +455,7 @@ def trade(faction: Faction, other: Faction) -> ActionResult:
 
     faction.save()
     other.save()
-    return ActionResult(action=FactionAction.TRADE)
+    return ActionResult(action=Action.TRADE)
 
 
 def merge(faction: Faction, other: Faction) -> ActionResult:
@@ -361,17 +465,17 @@ def merge(faction: Faction, other: Faction) -> ActionResult:
     other.population = 0
     other.save()
     faction.save()
-    return ActionResult(action=FactionAction.MERGE, notes=f"absorbed {other}")
+    return ActionResult(action=Action.MERGE, notes=f"absorbed {other}")
 
 
 def battle(faction: Faction, other: Faction) -> ActionResult:
-    if other.current_action == FactionAction.TRAVEL:
+    if other.current_action == Action.TRAVEL:
         damage = faction.combat_skill // 2
         other.population -= damage
         other.speed += 3
         other.save()
         return ActionResult(
-            action=FactionAction.BATTLE,
+            action=Action.BATTLE,
             success=True,
             notes=f"{other} was traveling: took {damage} population damage, gained 3 speed",
         )
@@ -393,7 +497,7 @@ def battle(faction: Faction, other: Faction) -> ActionResult:
 
     won = winner == faction
     return ActionResult(
-        action=FactionAction.BATTLE,
+        action=Action.BATTLE,
         dice_roll=faction_roll,
         success=won,
         notes=f"{'won' if won else 'lost'} vs {other}",
@@ -404,27 +508,27 @@ def train(faction: Faction) -> ActionResult:
     roll = random.randint(1, 6)
     faction.combat_skill = min(faction.combat_skill + roll, faction.combat_skill_max)
     faction.save()
-    return ActionResult(action=FactionAction.TRAIN, dice_roll=roll, notes=f"+{roll} combat_skill")
+    return ActionResult(action=Action.TRAIN, dice_roll=roll, notes=f"+{roll} combat_skill")
 
 
 def craft(faction: Faction) -> ActionResult:
     roll = random.randint(1, 6)
     faction.technology = min(faction.technology + roll, faction.technology_max)
     faction.save()
-    return ActionResult(action=FactionAction.CRAFT, dice_roll=roll, notes=f"+{roll} technology")
+    return ActionResult(action=Action.CRAFT, dice_roll=roll, notes=f"+{roll} technology")
 
 
-def delve(faction: Faction, dungeon_difficulty: int) -> ActionResult:
+def delve(faction: Faction, dungeon) -> ActionResult:
     roll = random.randint(1, 20)
     total = roll + modifier(faction.combat_skill)
-    success = total >= dungeon_difficulty
+    success = total >= dungeon.difficulty
     faction.theology = max(0, faction.theology - 5)
     if success:
-        faction.technology_max += 1
+        faction.technology_max += dungeon.technology_max_modifier
     faction.save()
     return ActionResult(
-        action=FactionAction.DELVE,
+        action=Action.DELVE,
         dice_roll=roll,
         success=success,
-        notes=f"rolled {total} vs difficulty {dungeon_difficulty}",
+        notes=f"rolled {total} vs difficulty {dungeon.difficulty}",
     )

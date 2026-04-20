@@ -4,7 +4,7 @@ from .hex import Hex
 from ..utils import modifier
 
 
-class FactionAction(models.TextChoices):
+class Action(models.TextChoices):
     SUPPLY = 'supply', 'Supply'
     TRAVEL = 'travel', 'Travel'
     TRADE  = 'trade',  'Trade'
@@ -47,10 +47,10 @@ class Faction(models.Model):
     theology = models.IntegerField(default=50)
 
     current_action = models.CharField(
-        max_length=20, choices=FactionAction.choices, null=True, blank=True
+        max_length=20, choices=Action.choices, null=True, blank=True
     )
     last_action = models.CharField(
-        max_length=20, choices=FactionAction.choices, null=True, blank=True
+        max_length=20, choices=Action.choices, null=True, blank=True
     )
 
     # Set by Black Death for its duration; overrides the computed property

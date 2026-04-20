@@ -3,6 +3,7 @@ from django.db import models
 
 class WorldSettings(models.Model):
     trade_amount = models.IntegerField(default=5)
+    hex_resource_tick_modifier = models.IntegerField(default=5)
 
     def save(self, *args, **kwargs):
         self.pk = 1

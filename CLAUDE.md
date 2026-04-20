@@ -36,8 +36,9 @@ HexTick/                        # repo root
       models/
         __init__.py             # re-exports everything; import from here
         world.py                # Map
-        hex.py                  # Hex, TerrainType, WeatherType
-        faction.py              # Faction, FactionAction, DiseaseType, ActiveDisease
+        hex.py                  # Hex, TerrainType, WeatherType, POIType, PointOfInterest
+        faction.py              # Faction, Action, DiseaseType, ActiveDisease
+        characters.py           # Item, Knowledge, Character, CharacterTick
         ticks.py                # Tick, HexTick, FactionTick
         settings.py             # WorldSettings singleton
       actions.py                # ALL game logic — tick, actions, encounters, diseases
@@ -51,7 +52,7 @@ HexTick/                        # repo root
 
 **`actions.py` is the game engine.** It imports models freely. Models never import from `actions.py`.
 
-**Tick records are immutable.** `HexTick` and `FactionTick` are history. Never update them after creation. All their fields are `readonly_fields` in admin.
+**Tick records are immutable.** `HexTick`, `FactionTick`, and `CharacterTick` are history. Never update them after creation. All their fields are `readonly_fields` in admin.
 
 **`WorldSettings` is a singleton.** `save()` always forces `pk=1`. Always access via `WorldSettings.get()`.
 
@@ -82,6 +83,28 @@ Axial coordinates: `row`, `col`. Hex distance uses the cube coordinate formula i
 
 `terrain_difficulty` and `resource_generation` on `Hex` are `@property` — derived from `terrain_type`, not stored. Do not add them as DB columns.
 
+### Points of Interest
+
+POIs are `PointOfInterest` model instances with a FK to `Hex` (related name `pois`). Each has a `poi_type` from `POIType` choices. Set up during world prep — not modified by ticks.
+
+| Type | Key fields |
+|---|---|
+| `DUNGEON` | `difficulty`, `title`, `description`, `notes`, `technology_max_modifier`, `items`, `knowledge` |
+| `VILLAGE` | `faction` (FK), `name` |
+| `RUIN` | `difficulty`, `items`, `knowledge` |
+| `STASH` | `items`, `knowledge` |
+| `MONSTER_BASE` | `monster_type` (CharField) |
+
+All POIs have `player_explored` (bool). `items` and `knowledge` are M2M to `Item` and `Knowledge`.
+
+`HexTick` snapshots the hex state each tick but does **not** copy POIs — they are accessed live via `hex.pois.all()`.
+
+### WorldSettings
+
+Editable singleton. Fields:
+- `trade_amount` (default 5) — resources/technology swapped per trade action
+- `hex_resource_tick_modifier` (default 5) — multiplied by `hex.resource_generation` each daily tick
+
 ### Tick architecture
 
 One tick = one 8-hour shift.
@@ -92,10 +115,11 @@ tick.number % 21 == 0  → weekly effects (population roll)
 ```
 
 Entry points:
-- `tick_hex(hex, tick) → HexTick` — regenerates resources, snapshots hex state
+- `tick_hex(hex, tick) → HexTick` — regenerates resources on daily tick, snapshots hex state
 - `tick_faction(faction, tick, nearby_factions, candidate_hexes) → FactionTick` — resolves action, applies daily/weekly effects, snapshots faction state
+- `tick_character(character, tick, factions_on_hex) → CharacterTick` — only acts if `is_wanderer`; resolves travel/supply/merge, applies daily ration consumption and famine
 
-The caller is responsible for providing `nearby_factions` and `candidate_hexes`. These are not queried inside the tick functions — keep DB queries out of the engine.
+The caller is responsible for providing `nearby_factions`, `candidate_hexes`, and `factions_on_hex`. These are not queried inside the tick functions — keep DB queries out of the engine.
 
 ### Faction types
 
@@ -118,7 +142,7 @@ All three types still get daily/weekly effects applied and a `FactionTick` snaps
 5. `closest.agreeableness >= 0` AND `last_action != TRADE` → trade
 6. `faction.comfort(hex.resources) >= 0` → supply
 7. `comfort < 0` → travel to best candidate hex (min `terrain_difficulty - resources`)
-8. Dungeon in `points_of_interest` AND `resources > population` AND `d12 - modifier(theology) >= 9` → delve
+8. Dungeon POI on hex AND `resources > population` AND `d12 - modifier(theology) >= 9` → delve
 9. `resources > population` AND `technology_max - technology > 10` → craft
 10. Default → train
 
@@ -178,13 +202,9 @@ Triggered on every `travel()` call (entering a new hex). Roll: `1d20 + hex.encou
 
 ### Dungeons
 
-Dungeons are entries in `hex.points_of_interest` (JSONField, list of dicts):
+Dungeons are `PointOfInterest` instances with `poi_type = 'dungeon'`. Retrieved via `hex.pois.filter(poi_type='dungeon').first()`.
 
-```json
-{"type": "dungeon", "difficulty": 15}
-```
-
-Delve roll: `1d20 + modifier(combat_skill) >= dungeon.difficulty`. Regardless of success, `theology -= 5` (floored at 0). Success raises `technology_max` by 1.
+Delve roll: `1d20 + modifier(combat_skill) >= poi.difficulty`. Regardless of success, `theology -= 5` (floored at 0). On success, `faction.technology_max += poi.technology_max_modifier`.
 
 ### Trade
 
@@ -195,14 +215,32 @@ Amount is `WorldSettings.get().trade_amount` (default 5, editable in admin). Dir
 - If `other.current_action == TRAVEL`: attacker deals `combat_skill // 2` population damage, defender gains 3 speed. No roll.
 - Otherwise: both roll `1d20 + combat_skill`. Winner subtracts their `combat_skill` from loser's `population`, loses `loser.combat_skill // 2` from their own `combat_skill`, and gains `combat_skill` resources.
 
+### Character tick (`tick_character`)
+
+Only executes action logic if `is_wanderer = True` and `is_dead = False`. Daily effects (rations, famine) always apply on `tick.number % 3 == 0`.
+
+**Action priority:**
+1. `destination` is set → travel (costs `terrain_difficulty` from `speed`, clears `destination` on arrival)
+2. `rations < ration_limit // 2` → supply (gain `resource_generation` rations from the hex; does **not** reduce `hex.resources`)
+3. Not a scout AND `can_merge` AND faction on hex has `agreeableness > 50`, `resources > population`, and combined agreeableness with character's faction `> 100` → merge (character joins that faction, `target.population += 1`)
+
+**Daily (tick % 3 == 0):**
+- `speed` resets to `max_speed`
+- `rations -= 1` (floored at 0)
+- `famine_streak += 1` if `rations == 0`, else reset to 0
+- `is_dead = True` if `famine_streak >= 5`
+
+**Character fields:** `speed` (current), `max_speed` (default 4, GM-settable), `rations`, `ration_limit`, `famine_streak`, `resource_generation` (1–3), `combat_skill`, `scouting`, `can_merge`, `is_wanderer`, `is_dead`, `destination` (FK Hex), `current_hex` (FK Hex, required if `is_wanderer`).
+
+### Scout visibility (`update_character_visibility`)
+
+`update_character_visibility(character, all_hexes)` — if `character.scouting > 0` and `current_hex` is set, marks all hexes within `modifier(scouting)` distance as `player_explored = True`. Skips hexes already explored. Caller passes the full hex list; no DB queries inside. Call this after a character moves or on each tick for scouting characters.
+
 ---
 
 ## Models not yet built
 
-- `Character` — referenced by `Faction.leader` as a string FK (`'world.Character'`). Django will raise an error on migration until this model exists in the `world` app.
 - `Party` — referenced by `PartyTick.party`. `PartyTick` exists in `ticks.py` but is inert until `Party` is created.
-
-When building `Character`, add it to `world/models/__init__.py` and register it in `admin.py`.
 
 ---
 
@@ -212,3 +250,4 @@ When building `Character`, add it to `world/models/__init__.py` and register it 
 - No React frontend — island architecture planned; Vite dev server runs alongside Django
 - No migrations have been generated or run — venv/Docker must be sorted first
 - `FactionTick` does not snapshot `last_action` or `is_gm_faction` / `is_player_faction` — add if needed for history replay
+- `Knowledge` FK on `Character` is commented out pending decision on whether characters carry knowledge directly or only via their faction/POI interactions

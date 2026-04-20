@@ -39,8 +39,8 @@ class TerrainType(str):
 _TERRAIN_TYPES = [
     TerrainType('plains',   'Plains',   terrain_difficulty=1, resource_generation=2),
     TerrainType('forest',   'Forest',   terrain_difficulty=2, resource_generation=1),
-    TerrainType('mountain', 'Mountain', terrain_difficulty=3, resource_generation=0),
-    TerrainType('swamp',    'Swamp',    terrain_difficulty=3, resource_generation=2),
+    TerrainType('mountain', 'Mountain', terrain_difficulty=4, resource_generation=0),
+    TerrainType('swamp',    'Swamp',    terrain_difficulty=4, resource_generation=3),
     TerrainType('desert',   'Desert',   terrain_difficulty=2, resource_generation=0),
     TerrainType('coast',    'Coast',    terrain_difficulty=1, resource_generation=2),
 ]
@@ -51,6 +51,14 @@ TerrainType.MOUNTAIN = _TERRAIN_TYPES[2]
 TerrainType.SWAMP    = _TERRAIN_TYPES[3]
 TerrainType.DESERT   = _TERRAIN_TYPES[4]
 TerrainType.COAST    = _TERRAIN_TYPES[5]
+
+
+class POIType(models.TextChoices):
+    DUNGEON      = 'dungeon',      'Dungeon'
+    VILLAGE      = 'village',      'Village'
+    RUIN         = 'ruin',         'Ruin'
+    STASH        = 'stash',        'Stash'
+    MONSTER_BASE = 'monster_base', 'Monster Base'
 
 
 class WeatherType(models.TextChoices):
@@ -70,7 +78,6 @@ class Hex(models.Model):
         max_length=20, choices=TerrainType.choices(), default=TerrainType.PLAINS
     )
     resources = models.IntegerField(default=0)
-    points_of_interest = models.JSONField(default=list)
     weather = models.CharField(
         max_length=20, choices=WeatherType.choices, default=WeatherType.FAIR
     )
@@ -95,3 +102,36 @@ class Hex(models.Model):
 
     def __str__(self):
         return f"Hex({self.row}, {self.col})"
+
+
+class PointOfInterest(models.Model):
+    hex = models.ForeignKey(Hex, on_delete=models.CASCADE, related_name='pois')
+    poi_type = models.CharField(max_length=20, choices=POIType.choices)
+    name = models.CharField(max_length=200, blank=True, default='')
+
+    # Dungeon / Ruin
+    difficulty = models.IntegerField(default=0)
+
+    # Dungeon
+    title = models.CharField(max_length=200, blank=True, default='')
+    description = models.TextField(blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    technology_max_modifier = models.IntegerField(default=1)
+
+    # Village
+    faction = models.ForeignKey(
+        'world.Faction', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='villages',
+    )
+
+    # Monster Base
+    monster_type = models.CharField(max_length=100, blank=True, default='')
+
+    player_explored = models.BooleanField(default=False)
+
+    # Dungeon / Ruin / Stash
+    items = models.ManyToManyField('world.Item', blank=True)
+    knowledge = models.ManyToManyField('world.Knowledge', blank=True)
+
+    def __str__(self):
+        return f"{self.get_poi_type_display()} at {self.hex}" if not self.name else self.name

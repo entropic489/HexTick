@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     Map, Hex,
     Faction, ActiveDisease,
+    Item, Knowledge, Character, CharacterTick,
     Tick, HexTick, FactionTick,
     WorldSettings,
 )
@@ -88,7 +89,7 @@ class FactionTickInline(admin.TabularInline):
 class HexTickAdmin(admin.ModelAdmin):
     list_display = ('tick', 'hex', 'resources', 'weather')
     list_filter = ('tick',)
-    readonly_fields = ('tick', 'hex', 'terrain_type', 'resources', 'points_of_interest',
+    readonly_fields = ('tick', 'hex', 'terrain_type', 'resources',
                        'weather', 'encounter_likelihood', 'player_explored', 'player_visible')
 
 
@@ -100,3 +101,56 @@ class FactionTickAdmin(admin.ModelAdmin):
                        'technology_max', 'resources', 'agreeableness', 'combat_skill',
                        'scouting', 'theology', 'famine_streak', 'current_hex', 'destination',
                        'action', 'dice_roll')
+
+
+@admin.register(Item)
+class ItemAdmin(admin.ModelAdmin):
+    list_display = ('title',)
+    search_fields = ('title',)
+
+
+@admin.register(Knowledge)
+class KnowledgeAdmin(admin.ModelAdmin):
+    list_display = ('title', 'do_players_know')
+    list_filter = ('do_players_know',)
+    search_fields = ('title',)
+
+
+class CharacterTickInline(admin.TabularInline):
+    model = CharacterTick
+    extra = 0
+    readonly_fields = ('tick', 'rations', 'famine_streak', 'speed', 'is_dead',
+                       'is_wanderer', 'destination', 'current_hex', 'action', 'notes')
+    can_delete = False
+
+
+@admin.register(Character)
+class CharacterAdmin(admin.ModelAdmin):
+    list_display = ('name', 'faction', 'is_player', 'is_wanderer', 'is_dead', 'current_hex')
+    list_filter = ('is_player', 'is_wanderer', 'is_dead', 'can_merge')
+    search_fields = ('name',)
+    readonly_fields = ('is_dead', 'famine_streak')
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'age', 'faction', 'current_hex', 'destination'),
+        }),
+        ('Flags', {
+            'fields': ('is_player', 'is_leader', 'is_wanderer', 'is_dead', 'can_merge'),
+        }),
+        ('Stats', {
+            'fields': ('combat_skill', 'speed', 'max_speed', 'scouting',
+                       'resource_generation', 'rations', 'ration_limit', 'famine_streak'),
+        }),
+        ('GM Notes', {
+            'fields': ('notes', 'drive', 'items', 'knowledge'),
+        }),
+    )
+    inlines = [CharacterTickInline]
+
+
+@admin.register(CharacterTick)
+class CharacterTickAdmin(admin.ModelAdmin):
+    list_display = ('tick', 'character', 'action', 'rations', 'is_dead')
+    list_filter = ('tick', 'action', 'is_dead')
+    readonly_fields = ('tick', 'character', 'rations', 'famine_streak', 'speed',
+                       'is_dead', 'is_wanderer', 'destination', 'current_hex', 'action', 'notes')

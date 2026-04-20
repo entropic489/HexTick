@@ -1,7 +1,7 @@
 from django.db import models
 
-from .hex import Hex, WeatherType
-from .faction import Faction, FactionAction
+from .hex import Hex, WeatherType, PointOfInterest
+from .faction import Faction, Action
 
 
 class Tick(models.Model):
@@ -18,7 +18,7 @@ class HexTick(models.Model):
 
     terrain_type = models.CharField(max_length=20)
     resources = models.IntegerField()
-    points_of_interest = models.JSONField()
+    points_of_interest = models.ManyToManyField(PointOfInterest, blank=True)
     weather = models.CharField(max_length=20, choices=WeatherType.choices)
     encounter_likelihood = models.IntegerField()
     player_explored = models.BooleanField()
@@ -53,7 +53,7 @@ class FactionTick(models.Model):
         Hex, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
     )
 
-    action = models.CharField(max_length=20, choices=FactionAction.choices, null=True, blank=True)
+    action = models.CharField(max_length=20, choices=Action.choices, null=True, blank=True)
     dice_roll = models.IntegerField(null=True, blank=True)
 
     class Meta:
