@@ -1,0 +1,40 @@
+.layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #0d0d1a;
+  color: #cdd6f4;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  background: #181825;
+  border-bottom: 1px solid #313244;
+  gap: 1rem;
+}
+
+.title {
+  font-size: 1rem;
+  font-weight: 600;
+  flex: 1;
+}
+
+.popout {
+  padding: 0.3rem 0.75rem;
+  background: none;
+  border: 1px solid #89b4fa;
+  border-radius: 4px;
+  color: #89b4fa;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: #6c7086;
+}

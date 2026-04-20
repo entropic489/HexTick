@@ -1,0 +1,36 @@
+.controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: #181825;
+  border-top: 1px solid #313244;
+}
+
+.controls button {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  background: #313244;
+  color: #cdd6f4;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.controls button:hover:not(:disabled) {
+  background: #45475a;
+}
+
+.controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.reverse {
+  margin-right: auto;
+}
+
+.day {
+  background: #1e3a5f !important;
+  border-color: #89b4fa !important;
+}

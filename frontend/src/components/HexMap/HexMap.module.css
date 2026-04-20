@@ -1,0 +1,9 @@
+.container {
+  overflow: auto;
+  flex: 1;
+  background: #0d0d1a;
+}
+
+.svg {
+  display: block;
+}

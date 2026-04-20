@@ -1,0 +1,67 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border: 1px solid #45475a;
+  border-radius: 8px;
+  padding: 1.5rem;
+  min-width: 320px;
+  max-width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+  position: relative;
+}
+
+.close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: none;
+  border: none;
+  color: #cdd6f4;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.title {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+}
+
+.coords {
+  color: #6c7086;
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.stats dt { color: #6c7086; }
+
+.poiList, .factionList {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.hidden { color: #6c7086; font-style: italic; }
+.notes { color: #6c7086; font-size: 0.85rem; margin: 0.25rem 0 0; }
+.warning { color: #f9e2af; }
+.danger { color: #f38ba8; }
