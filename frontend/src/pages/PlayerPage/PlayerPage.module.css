@@ -6,6 +6,19 @@
   color: #cdd6f4;
 }
 
+.body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.mapArea {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .header {
   display: flex;
   align-items: center;

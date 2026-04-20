@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { getMap, getHexes, getFactions } from '../../api/maps';
 import { HexMap } from '../../components/HexMap/HexMap';
-import { HexModal } from '../../components/HexModal/HexModal';
+import { HexPanel } from '../../components/HexPanel/HexPanel';
 import { TickControls } from '../../components/TickControls/TickControls';
 import { EventLog } from '../../components/EventLog/EventLog';
 import { useGameStore } from '../../store/useGameStore';
@@ -15,6 +15,8 @@ export function GMPage() {
   const setSelectedMapId = useGameStore((s) => s.setSelectedMapId);
   const selectedHexId = useGameStore((s) => s.selectedHexId);
   const setSelectedHexId = useGameStore((s) => s.setSelectedHexId);
+  const prepMode = useGameStore((s) => s.prepMode);
+  const setPrepMode = useGameStore((s) => s.setPrepMode);
 
   // keep store in sync if user navigates directly via URL
   if (useGameStore.getState().selectedMapId !== id) setSelectedMapId(id);
@@ -33,6 +35,12 @@ export function GMPage() {
       <header className={styles.header}>
         <span className={styles.title}>{map.name} — GM</span>
         <button
+          className={`${styles.modeToggle} ${prepMode ? styles.modePrep : styles.modePlay}`}
+          onClick={() => setPrepMode(!prepMode)}
+        >
+          {prepMode ? 'Play' : 'Prep'}
+        </button>
+        <button
           className={styles.popout}
           onClick={() => window.open(`/map/${id}/player`, '_blank', 'width=1024,height=768')}
         >
@@ -40,25 +48,27 @@ export function GMPage() {
         </button>
       </header>
 
-      <HexMap
-        map={map}
-        hexes={hexes}
-        factions={factions}
-        selectedHexId={selectedHexId}
-        fogOfWar={false}
-        onHexClick={setSelectedHexId}
-      />
-
-      <TickControls />
-
-      {selectedHex && (
-        <HexModal
+      <div className={styles.body}>
+        <div className={styles.mapArea}>
+          <HexMap
+            map={map}
+            hexes={hexes}
+            factions={factions}
+            selectedHexId={selectedHexId}
+            fogOfWar={false}
+            onHexClick={setSelectedHexId}
+          />
+          <TickControls />
+        </div>
+        <HexPanel
           hex={selectedHex}
           factions={hexFactions}
           gmMode={true}
+          prepMode={prepMode}
+          mapId={id}
           onClose={() => setSelectedHexId(null)}
         />
-      )}
+      </div>
 
       <EventLog />
     </div>

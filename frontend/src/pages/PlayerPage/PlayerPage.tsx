@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { getMap, getHexes, getFactions } from '../../api/maps';
 import { postPartyAction } from '../../api/tick';
 import { HexMap } from '../../components/HexMap/HexMap';
-import { HexModal } from '../../components/HexModal/HexModal';
+import { HexPanel } from '../../components/HexPanel/HexPanel';
 import { EventLog } from '../../components/EventLog/EventLog';
 import { useGameStore } from '../../store/useGameStore';
 import styles from './PlayerPage.module.css';
@@ -48,23 +48,24 @@ export function PlayerPage() {
         )}
       </header>
 
-      <HexMap
-        map={map}
-        hexes={hexes}
-        factions={factions.filter((f) => f.is_player_faction)}
-        selectedHexId={selectedHexId}
-        fogOfWar={true}
-        onHexClick={setSelectedHexId}
-      />
-
-      {selectedHex && (
-        <HexModal
+      <div className={styles.body}>
+        <div className={styles.mapArea}>
+          <HexMap
+            map={map}
+            hexes={hexes}
+            factions={factions.filter((f) => f.is_player_faction)}
+            selectedHexId={selectedHexId}
+            fogOfWar={true}
+            onHexClick={setSelectedHexId}
+          />
+        </div>
+        <HexPanel
           hex={selectedHex}
           factions={[]}
           gmMode={false}
           onClose={() => setSelectedHexId(null)}
         >
-          {playerFaction && selectedHex.player_visible && (
+          {selectedHex && playerFaction && selectedHex.player_visible && (
             <button
               className={styles.moveBtn}
               disabled={isMoving}
@@ -73,8 +74,8 @@ export function PlayerPage() {
               Move here (1 shift)
             </button>
           )}
-        </HexModal>
-      )}
+        </HexPanel>
+      </div>
 
       <EventLog />
     </div>

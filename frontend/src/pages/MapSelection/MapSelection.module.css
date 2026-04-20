@@ -66,6 +66,20 @@
   color: #89b4fa !important;
 }
 
+.create {
+  margin-bottom: 1rem;
+  padding: 0.45rem 1.25rem;
+  background: #89b4fa;
+  border: none;
+  border-radius: 4px;
+  color: #1e1e2e;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.create:hover { background: #b4d0fa; }
+
 .status {
   display: flex;
   align-items: center;

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MapSelection } from './pages/MapSelection/MapSelection';
+import { CreateMap } from './pages/CreateMap/CreateMap';
 import { GMPage } from './pages/GMPage/GMPage';
 import { PlayerPage } from './pages/PlayerPage/PlayerPage';
 
@@ -16,6 +17,7 @@ export default function App() {
           <Route path="/" element={<MapSelection />} />
           <Route path="/map/:mapId/gm" element={<GMPage />} />
           <Route path="/map/:mapId/player" element={<PlayerPage />} />
+          <Route path="/maps/create" element={<CreateMap />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

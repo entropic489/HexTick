@@ -52,9 +52,9 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
   frontend/                     # Vite React app
     src/
       api/                      # fetch wrappers (client.ts, maps.ts, tick.ts)
-      components/               # HexMap, HexModal, TickControls, EventLog
+      components/               # HexMap, HexPanel, AddPOIModal, TickControls, EventLog
       pages/                    # MapSelection, GMPage, PlayerPage
-      store/useGameStore.ts     # Zustand: selectedMapId, selectedHexId, pendingEvents
+      store/useGameStore.ts     # Zustand: selectedMapId, selectedHexId, pendingEvents, prepMode
       types/index.ts            # TypeScript interfaces mirroring Django models
   design_docs/                  # API.md, Factions.md
   docker-compose.yml
@@ -67,7 +67,8 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 - `web` must be in Django's `ALLOWED_HOSTS`.
 - Vite dev server binds to `0.0.0.0` so it's reachable from the host.
 - Media files (`/media/`) are served by Django via `urls.py` using `static()` — only active when `DEBUG=True`. In production, serve via nginx or a storage backend.
-- `map.image` returns a relative path (e.g. `maps/foo.png`). The frontend must prefix it with the backend base URL (`/media/`) to use it as an `<img>` src. Not yet rendered — the hex grid is SVG only.
+- `map.image` is serialized by Django as the full `/media/maps/foo.png` path (not just the relative part). Use it directly as an `<img src>` or SVG `<image href>` — do not prepend `/media/` again.
+- Vite proxies both `/api` and `/media` to the backend (`vite.config.ts`).
 
 ## Hard rules
 
@@ -82,6 +83,20 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 **Tick sequence starts at 1.** `tick.number % 3 == 0` is a day; `tick.number % 21 == 0` is a week. Tick 0 never exists.
 
 **DB queries stay out of the engine.** `tick_faction`, `tick_hex`, `tick_character` accept pre-fetched lists (`nearby_factions`, `candidate_hexes`, `factions_on_hex`). Don't add queries inside these functions.
+
+---
+
+## Hex coordinate system
+
+**Rows increase upward, cols increase rightward** (standard tabletop convention). `origin_x`/`origin_y` on `Map` is the pixel center of the **bottom-left hex** (row=0, col=0) in the map image.
+
+`hexToPixel(row, col, size, originX, originY)` in `hexGeometry.ts`:
+- `x = originX + col * size * 1.5`
+- `y = originY - row * size * √3 - (col % 2 === 1 ? size * √3 / 2 : 0)`
+
+`mapBounds` returns `{ width, height, viewBox }`. The SVG uses `viewBox` when rendering without a background image (no hexes yet), and natural image dimensions when the image is loaded.
+
+**All hex coordinates are in image-pixel space.** The SVG transform zooms/pans the whole scene uniformly — hex grid and background image never drift relative to each other.
 
 ---
 
@@ -132,12 +147,27 @@ BATTLE and TRADE each have a 1-tick cooldown via `last_action`.
 
 ---
 
+## GM hex editing
+
+The GM view has two modes toggled by the **Prep / Play** button in the top bar. The button label always shows the *next* state (click "Prep" to enter prep mode, click "Play" to leave it).
+
+**Prep mode** — `prepMode: boolean` in Zustand. When true, selecting a hex immediately opens it in edit mode. When false, the hex panel opens in view mode and an **Edit** button is available to switch.
+
+**Edit mode** (inside `HexPanel`) — edits `terrain_type`, `weather`, `resources`, `encounter_likelihood`, `player_explored`, `player_visible` in-place. Saved via `PATCH /api/hexes/{hex_id}/`. On save, React Query invalidates `['hexes', mapId]`. Cancel reverts draft to the current server state.
+
+**Add POI** — the `+ Add POI` button in edit mode opens `AddPOIModal`. Fields shown are conditional on `poi_type` (difficulty and title on dungeon; difficulty on ruin; monster_type on monster_base; description/notes on dungeon only). Age and the three visibility flags are always shown. M2M fields (`items`, `knowledge`) and the `faction` FK (village) are not editable from this modal. POI is created via `POST /api/hexes/{hex_id}/pois/`.
+
+**POI detail expand** — in view mode, each POI row is a clickable button. Clicking toggles an inline detail panel showing difficulty, description, GM notes, and visible/explored flags. Click again to collapse.
+
+---
+
 ## What's not wired up yet
 
 **API**
 - `PATCH /api/factions/{id}/action/` not yet implemented — GM currently sets faction actions via Django admin
 - `GET /api/party/{id}/` not yet implemented — no endpoint to fetch party state
 - Reverse tick not implemented — returns 501 per spec; engine has no undo
+- No endpoint to edit or delete existing POIs
 
 **Backend**
 - `FactionTick` does not snapshot `last_action` or `is_gm_faction` / `is_player_faction`
@@ -146,7 +176,12 @@ BATTLE and TRADE each have a 1-tick cooldown via `last_action`.
 
 **Frontend**
 - `PlayerPage` passes `playerFaction.id` as the party ID to `POST /api/party/{id}/action/` — should be `Party.id`. Needs a party fetch in the component.
-- `map.image` is not rendered — the hex grid is SVG only; background map image not yet implemented
 - Party action radial menu (Search, Move, Explore, Supply) not yet built
 - GM faction action-setting modal not yet built
 - `patchPartyTickNotes` wired in `api/tick.ts` but no UI to trigger it
+- HexMap scroll-to-zoom is broken — anchor drifts toward bottom-right when cursor is not at top-left. Root cause unknown after investigation; pan/zoom now uses native listeners + direct SVG style mutation (refs, no React state). Needs a fresh look.
+- `AddPOIModal` does not support setting the `faction` FK (village type) — needs a faction picker
+
+**Map / hex creation**
+- `POST /api/maps/` uses Pillow to infer rows/cols from image dimensions ÷ hex size — approximate, ignores origin offset. Formula: `cols = floor(w / (size * 1.5))`, `rows = floor(h / (size * √3))`.
+- CreateMap page has a zoomable/pannable origin picker. `image_path` (relative to `MEDIA_ROOT`) lets you reuse an existing uploaded image without re-uploading.

@@ -1,7 +1,13 @@
 .container {
-  overflow: auto;
+  overflow: hidden;
   flex: 1;
   background: #0d0d1a;
+  cursor: grab;
+  user-select: none;
+}
+
+.container:active {
+  cursor: grabbing;
 }
 
 .svg {

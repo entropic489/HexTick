@@ -1,5 +1,6 @@
 from typing import Optional
-from ninja import NinjaAPI, Schema
+from ninja import NinjaAPI, Schema, File, Form
+from ninja.files import UploadedFile
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 from world.models import Map, Hex, PointOfInterest, Faction, Tick, FactionTick, PartyTick
@@ -30,6 +31,50 @@ def list_maps(request):
 @api.get("/maps/{map_id}/", response=MapSchema)
 def get_map(request, map_id: int):
     return get_object_or_404(Map, id=map_id)
+
+
+@api.post("/maps/", response=MapSchema)
+def create_map(
+    request,
+    name: Form[str],
+    hex_size: Form[int],
+    origin_x: Form[int],
+    origin_y: Form[int],
+    image: File[Optional[UploadedFile]] = None,
+    image_path: Form[Optional[str]] = None,
+):
+    from PIL import Image as PILImage
+    import math
+
+    if image:
+        pil = PILImage.open(image)
+        img_w, img_h = pil.size
+        image.seek(0)
+        image_value = image
+    elif image_path:
+        from django.conf import settings
+        import os
+        abs_path = os.path.join(settings.MEDIA_ROOT, image_path)
+        pil = PILImage.open(abs_path)
+        img_w, img_h = pil.size
+        image_value = image_path
+    else:
+        return api.create_response(request, {'detail': 'image or image_path required'}, status=400)
+
+    sqrt3 = math.sqrt(3)
+    cols = max(1, math.floor(img_w / (hex_size * 1.5)))
+    rows = max(1, math.floor(img_h / (hex_size * sqrt3)))
+
+    with transaction.atomic():
+        m = Map(name=name, hex_size=hex_size, origin_x=origin_x, origin_y=origin_y)
+        m.image = image_value
+        m.save()
+        Hex.objects.bulk_create([
+            Hex(map=m, row=r, col=c)
+            for r in range(rows)
+            for c in range(cols)
+        ])
+    return m
 
 
 class POISchema(Schema):
@@ -63,6 +108,49 @@ class HexSchema(Schema):
     @staticmethod
     def resolve_pois(obj):
         return list(obj.pois.all())
+
+
+class HexPatchSchema(Schema):
+    terrain_type: Optional[str] = None
+    resources: Optional[int] = None
+    weather: Optional[str] = None
+    encounter_likelihood: Optional[int] = None
+    player_explored: Optional[bool] = None
+    player_visible: Optional[bool] = None
+
+
+@api.patch("/hexes/{hex_id}/", response=HexSchema)
+@transaction.atomic
+def patch_hex(request, hex_id: int, body: HexPatchSchema):
+    hex_obj = get_object_or_404(Hex, id=hex_id)
+    for field, value in body.dict(exclude_unset=True).items():
+        setattr(hex_obj, field, value)
+    hex_obj.save()
+    hex_obj.pois.all()  # prefetch for resolver
+    return hex_obj
+
+
+class POICreateSchema(Schema):
+    poi_type: str
+    name: str = ''
+    difficulty: int = 0
+    title: str = ''
+    description: str = ''
+    notes: str = ''
+    technology_max_modifier: int = 1
+    monster_type: str = ''
+    age: int = 4
+    player_visible: bool = False
+    player_explored: bool = False
+    hidden: bool = False
+
+
+@api.post("/hexes/{hex_id}/pois/", response=POISchema)
+@transaction.atomic
+def create_poi(request, hex_id: int, body: POICreateSchema):
+    hex_obj = get_object_or_404(Hex, id=hex_id)
+    poi = PointOfInterest.objects.create(hex=hex_obj, **body.dict())
+    return poi
 
 
 @api.get("/maps/{map_id}/hexes/", response=list[HexSchema])

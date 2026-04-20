@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { getMaps } from '../../api/maps';
+
 import { useGameStore } from '../../store/useGameStore';
 import styles from './MapSelection.module.css';
 
@@ -25,6 +26,9 @@ export function MapSelection() {
     <div className={styles.page}>
       <h1>HexTick</h1>
       <p className={styles.sub}>Select a map to begin</p>
+      <button className={styles.create} onClick={() => navigate('/maps/create')}>
+        + Create Map
+      </button>
       <ul className={styles.list}>
         {maps?.map((m) => (
           <li key={m.id} className={styles.card}>

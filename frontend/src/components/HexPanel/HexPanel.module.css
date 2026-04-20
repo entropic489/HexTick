@@ -1,0 +1,267 @@
+.panel {
+  width: 25%;
+  min-width: 260px;
+  max-width: 360px;
+  height: 100%;
+  overflow-y: auto;
+  background: #181825;
+  color: #cdd6f4;
+  border-left: 1px solid #313244;
+  padding: 1rem;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.empty {
+  color: #6c7086;
+  text-align: center;
+  margin-top: 3rem;
+  font-size: 0.9rem;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.1rem;
+  line-height: 1.3;
+}
+
+.coords {
+  color: #6c7086;
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.editBtn {
+  background: none;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0.15rem 0.5rem;
+}
+
+.editBtn:hover { border-color: #89b4fa; color: #89b4fa; }
+
+.close {
+  background: none;
+  border: none;
+  color: #6c7086;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.close:hover { color: #cdd6f4; }
+
+.stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.stats dt { color: #6c7086; }
+
+h3 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6c7086;
+  margin: 1rem 0 0.5rem;
+}
+
+.poiList, .factionList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.poiRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  background: none;
+  border: 1px solid #313244;
+  border-radius: 4px;
+  color: #cdd6f4;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.poiRow:hover { border-color: #45475a; background: #181825; }
+.poiRowActive { border-color: #89b4fa; }
+
+.poiName { font-weight: 600; flex: 1; }
+
+.poiType {
+  color: #6c7086;
+  font-size: 0.75rem;
+  text-transform: capitalize;
+}
+
+.poiChevron { color: #6c7086; font-size: 0.65rem; }
+
+.poiDetail {
+  border: 1px solid #313244;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.poiDetailRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: #6c7086;
+}
+
+.poiDetailRow span:last-child { color: #cdd6f4; }
+
+.poiDescription {
+  font-size: 0.85rem;
+  color: #cdd6f4;
+  margin: 0;
+}
+
+.poiFlags {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+}
+
+.flagOn { color: #a6e3a1; }
+.flagOff { color: #45475a; }
+
+.hidden { color: #6c7086; font-style: italic; }
+.notes { color: #6c7086; font-size: 0.85rem; margin: 0.25rem 0 0; }
+.warning { color: #f9e2af; }
+.danger { color: #f38ba8; }
+.error { color: #f38ba8; font-size: 0.8rem; margin: 0.25rem 0 0; }
+
+/* Edit form */
+.editForm {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.fieldLabel {
+  display: contents;
+}
+
+.fieldName {
+  color: #6c7086;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.select,
+.input {
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.4rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.select:focus,
+.input:focus {
+  outline: none;
+  border-color: #89b4fa;
+}
+
+.checkLabel {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #6c7086;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.checkLabel input[type='checkbox'] {
+  accent-color: #89b4fa;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.editActions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.saveBtn,
+.cancelBtn {
+  padding: 0.3rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border: 1px solid;
+}
+
+.saveBtn {
+  background: #89b4fa;
+  border-color: #89b4fa;
+  color: #1e1e2e;
+  font-weight: 600;
+}
+
+.saveBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancelBtn {
+  background: none;
+  border-color: #45475a;
+  color: #6c7086;
+}
+
+.cancelBtn:hover { border-color: #cdd6f4; color: #cdd6f4; }
+
+.addPoiBtn {
+  padding: 0.3rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border: 1px solid #a6e3a1;
+  background: none;
+  color: #a6e3a1;
+  margin-left: auto;
+}
+
+.addPoiBtn:hover { background: #a6e3a1; color: #1e1e2e; }

@@ -11,6 +11,9 @@ interface GameStore {
   pendingEvents: TickEvent[];
   setPendingEvents: (events: TickEvent[]) => void;
   clearPendingEvents: () => void;
+
+  prepMode: boolean;
+  setPrepMode: (v: boolean) => void;
 }
 
 export const useGameStore = create<GameStore>((set) => ({
@@ -23,4 +26,7 @@ export const useGameStore = create<GameStore>((set) => ({
   pendingEvents: [],
   setPendingEvents: (events) => set({ pendingEvents: events }),
   clearPendingEvents: () => set({ pendingEvents: [] }),
+
+  prepMode: false,
+  setPrepMode: (v) => set({ prepMode: v }),
 }));
