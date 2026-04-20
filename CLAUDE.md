@@ -66,6 +66,8 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 - Frontend proxies `/api/*` to `http://web:8000` (Docker service name, set via `VITE_BACKEND_URL` env var).
 - `web` must be in Django's `ALLOWED_HOSTS`.
 - Vite dev server binds to `0.0.0.0` so it's reachable from the host.
+- Media files (`/media/`) are served by Django via `urls.py` using `static()` — only active when `DEBUG=True`. In production, serve via nginx or a storage backend.
+- `map.image` returns a relative path (e.g. `maps/foo.png`). The frontend must prefix it with the backend base URL (`/media/`) to use it as an `<img>` src. Not yet rendered — the hex grid is SVG only.
 
 ## Hard rules
 
@@ -132,8 +134,19 @@ BATTLE and TRADE each have a 1-tick cooldown via `last_action`.
 
 ## What's not wired up yet
 
-- `PlayerPage` passes `playerFaction.id` as the party ID to `POST /api/party/{id}/action/` — should be `Party.id`. Needs a party fetch in the component.
+**API**
+- `PATCH /api/factions/{id}/action/` not yet implemented — GM currently sets faction actions via Django admin
+- `GET /api/party/{id}/` not yet implemented — no endpoint to fetch party state
+- Reverse tick not implemented — returns 501 per spec; engine has no undo
+
+**Backend**
 - `FactionTick` does not snapshot `last_action` or `is_gm_faction` / `is_player_faction`
 - `Knowledge` FK on `Character` is commented out — pending decision on whether characters carry knowledge directly
-- Reverse tick not implemented — engine has no undo; snapshots are immutable history
-- `PATCH /api/factions/{id}/action/` not yet implemented — GM currently sets faction actions via Django admin
+- `update_character_visibility()` is not called anywhere in the tick flow — needs a home in step 6 of `_run_shift`
+
+**Frontend**
+- `PlayerPage` passes `playerFaction.id` as the party ID to `POST /api/party/{id}/action/` — should be `Party.id`. Needs a party fetch in the component.
+- `map.image` is not rendered — the hex grid is SVG only; background map image not yet implemented
+- Party action radial menu (Search, Move, Explore, Supply) not yet built
+- GM faction action-setting modal not yet built
+- `patchPartyTickNotes` wired in `api/tick.ts` but no UI to trigger it
