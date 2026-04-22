@@ -1,8 +1,20 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
 import type { Hex, Faction, Map } from '../../types';
 import { HexCell } from './HexCell';
-import { mapBounds } from './hexGeometry';
+import { mapBounds, hexToPixel } from './hexGeometry';
 import styles from './HexMap.module.css';
+
+function shortenLine(
+  x1: number, y1: number, x2: number, y2: number, amount: number,
+): [number, number, number, number] {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < amount * 2.5) return [x1, y1, x2, y2];
+  const ux = dx / len;
+  const uy = dy / len;
+  return [x1 + ux * amount, y1 + uy * amount, x2 - ux * amount, y2 - uy * amount];
+}
 
 interface Props {
   map: Map;
@@ -183,6 +195,118 @@ export function HexMap({ map, hexes, factions, selectedHexId, fogOfWar, onHexCli
             onClick={onHexClick}
           />
         ))}
+
+        {/* Faction movement arrows */}
+        {(() => {
+          const placed = factions.filter((f) => f.current_hex != null);
+          const arrows = placed.filter(
+            (f) => f.destination != null && f.current_hex !== f.destination,
+          );
+          const stationary = placed.filter(
+            (f) => f.destination == null || f.current_hex === f.destination,
+          );
+          const uniqueColors = [...new Set(placed.map((f) => f.color ?? '#89b4fa'))];
+          const hexById = new Map(hexes.map((h) => [h.id, h]));
+          const stroke = Math.max(2, map.hex_size * 0.1);
+          const headSize = stroke * 5;
+
+          return (
+            <>
+              <defs>
+                <filter id="faction-arrow-glow" x="-40%" y="-40%" width="180%" height="180%">
+                  <feGaussianBlur stdDeviation="3" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+                {uniqueColors.map((color) => {
+                  const id = `arrow-head-${color.replace('#', '')}`;
+                  return (
+                    <marker
+                      key={id}
+                      id={id}
+                      markerUnits="userSpaceOnUse"
+                      markerWidth={headSize * 2}
+                      markerHeight={headSize * 2}
+                      refX={headSize * 1.6}
+                      refY={headSize}
+                      orient="auto"
+                    >
+                      <polygon
+                        points={`0,0 ${headSize * 2},${headSize} 0,${headSize * 2} ${headSize * 0.6},${headSize}`}
+                        fill={color}
+                      />
+                    </marker>
+                  );
+                })}
+              </defs>
+
+              {arrows.map((f) => {
+                const src = hexById.get(f.current_hex!);
+                const dst = hexById.get(f.destination!);
+                if (!src || !dst) return null;
+                const [sx, sy] = hexToPixel(src.row, src.col, map.hex_size, map.origin_x, map.origin_y);
+                const [dx, dy] = hexToPixel(dst.row, dst.col, map.hex_size, map.origin_x, map.origin_y);
+                const [x1, y1, x2, y2] = shortenLine(sx, sy, dx, dy, map.hex_size * 0.45);
+                const color = f.color ?? '#89b4fa';
+                const markerId = `arrow-head-${color.replace('#', '')}`;
+                return (
+                  <g key={f.id} filter="url(#faction-arrow-glow)">
+                    {/* glow halo */}
+                    <line
+                      x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke={color}
+                      strokeWidth={stroke * 3}
+                      strokeLinecap="round"
+                      opacity={0.25}
+                    />
+                    {/* main shaft */}
+                    <line
+                      x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke={color}
+                      strokeWidth={stroke}
+                      strokeLinecap="round"
+                      markerEnd={`url(#${markerId})`}
+                      opacity={0.9}
+                    />
+                    {/* bright centre highlight */}
+                    <line
+                      x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke="rgba(255,255,255,0.35)"
+                      strokeWidth={stroke * 0.35}
+                      strokeLinecap="round"
+                    />
+                  </g>
+                );
+              })}
+
+              {stationary.map((f) => {
+                const src = hexById.get(f.current_hex!);
+                if (!src) return null;
+                const [cx, cy] = hexToPixel(src.row, src.col, map.hex_size, map.origin_x, map.origin_y);
+                const color = f.color ?? '#89b4fa';
+                const markerId = `arrow-head-${color.replace('#', '')}`;
+                const len = map.hex_size * 0.45;
+                const x1 = cx;
+                const y1 = cy + len * 0.4;
+                const x2 = cx;
+                const y2 = cy - len;
+                return (
+                  <g key={f.id} filter="url(#faction-arrow-glow)">
+                    <line x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke={color} strokeWidth={stroke * 3} strokeLinecap="round" opacity={0.25} />
+                    <line x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke={color} strokeWidth={stroke} strokeLinecap="round"
+                      markerEnd={`url(#${markerId})`} opacity={0.9} />
+                    <line x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke="rgba(255,255,255,0.35)" strokeWidth={stroke * 0.35} strokeLinecap="round" />
+                  </g>
+                );
+              })}
+            </>
+          );
+        })()}
       </svg>
     </div>
   );

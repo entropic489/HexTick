@@ -33,6 +33,8 @@ class Faction(models.Model):
         on_delete=models.SET_NULL, related_name='led_factions',
     )
 
+    color = models.CharField(max_length=7, default='#89b4fa')
+
     is_mobile = models.BooleanField(default=True)
     is_player_faction = models.BooleanField(default=False)
     is_gm_faction = models.BooleanField(default=False)
@@ -48,7 +50,12 @@ class Faction(models.Model):
     scouting = models.IntegerField(default=1)
     theology = models.IntegerField(default=90)
 
+    notes = models.TextField(blank=True, default='')
+
     current_action = models.CharField(
+        max_length=20, choices=Action.choices, null=True, blank=True
+    )
+    next_action = models.CharField(
         max_length=20, choices=Action.choices, null=True, blank=True
     )
     last_action = models.CharField(

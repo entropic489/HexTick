@@ -36,6 +36,7 @@ export function HexCell({ hex, factions, size, originX, originY, selected, fogOf
           textAnchor="middle"
           fontSize={size * 0.4}
           className={styles.factionLabel}
+          fill={f.color ?? '#ffffff'}
         >
           {f.name.slice(0, 2).toUpperCase()}
         </text>

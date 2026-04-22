@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { getMap, getHexes, getFactions } from '../../api/maps';
 import { HexMap } from '../../components/HexMap/HexMap';
 import { HexPanel } from '../../components/HexPanel/HexPanel';
@@ -17,6 +17,7 @@ export function GMPage() {
   const setSelectedHexId = useGameStore((s) => s.setSelectedHexId);
   const prepMode = useGameStore((s) => s.prepMode);
   const setPrepMode = useGameStore((s) => s.setPrepMode);
+  const navigate = useNavigate();
 
   // keep store in sync if user navigates directly via URL
   if (useGameStore.getState().selectedMapId !== id) setSelectedMapId(id);
@@ -41,6 +42,12 @@ export function GMPage() {
           {prepMode ? 'Play' : 'Prep'}
         </button>
         <button
+          className={styles.addFactionBtn}
+          onClick={() => navigate(`/map/${id}/factions`)}
+        >
+          Factions
+        </button>
+        <button
           className={styles.popout}
           onClick={() => window.open(`/map/${id}/player`, '_blank', 'width=1024,height=768')}
         >
@@ -62,6 +69,7 @@ export function GMPage() {
         </div>
         <HexPanel
           hex={selectedHex}
+          hexes={hexes}
           factions={hexFactions}
           gmMode={true}
           prepMode={prepMode}

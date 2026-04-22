@@ -159,25 +159,30 @@ The GM view has two modes toggled by the **Prep / Play** button in the top bar. 
 
 **POI detail expand** — in view mode, each POI row is a clickable button. Clicking toggles an inline detail panel showing difficulty, description, GM notes, and visible/explored flags. Click again to collapse.
 
+**Add Faction** — the `+ Add Faction` button in edit mode opens `AddFactionModal`. Fields: name, color (hex color picker + text), speed, population, technology, resources, combat_skill, location (current hex, defaults to the selected hex), and faction type flags (mobile, GM faction, player faction). Destination is not set at creation. Created via `POST /maps/{map_id}/factions/`.
+
+**Faction arrows** — rendered in `HexMap` as an SVG layer above hex cells. Each faction with a `current_hex` gets a three-layer arrow (glow halo + solid shaft + white highlight, with a custom arrowhead marker per color). Factions with a `destination` draw a movement arrow from their hex to the destination; factions without a destination draw a short upward arrow on their hex. The 2-letter label in each hex also uses the faction's color.
+
 ---
 
 ## What's not wired up yet
 
 **API**
-- `PATCH /api/factions/{id}/action/` not yet implemented — GM currently sets faction actions via Django admin
+- `PATCH /api/factions/{id}/action/` not yet implemented as a dedicated endpoint — `next_action` is now editable via `PATCH /api/factions/{id}/` from the HexPanel faction detail
 - `GET /api/party/{id}/` not yet implemented — no endpoint to fetch party state
 - Reverse tick not implemented — returns 501 per spec; engine has no undo
 - No endpoint to edit or delete existing POIs
 
 **Backend**
-- `FactionTick` does not snapshot `last_action` or `is_gm_faction` / `is_player_faction`
+- `FactionTick` does not snapshot `last_action`, `next_action`, `notes`, `is_gm_faction`, or `is_player_faction`
 - `Knowledge` FK on `Character` is commented out — pending decision on whether characters carry knowledge directly
 - `update_character_visibility()` is not called anywhere in the tick flow — needs a home in step 6 of `_run_shift`
 
 **Frontend**
+- "Show on map" on the Factions page selects the faction's hex but does not pan/zoom to it. Programmatic pan requires exposing the ref-based transform in `HexMap` — deferred.
 - `PlayerPage` passes `playerFaction.id` as the party ID to `POST /api/party/{id}/action/` — should be `Party.id`. Needs a party fetch in the component.
 - Party action radial menu (Search, Move, Explore, Supply) not yet built
-- GM faction action-setting modal not yet built
+- GM faction action-setting modal not yet built — `next_action`, `destination`, and `notes` are now editable from the HexPanel faction expand/edit, but a dedicated modal for full faction management is not built
 - `patchPartyTickNotes` wired in `api/tick.ts` but no UI to trigger it
 - HexMap scroll-to-zoom is broken — anchor drifts toward bottom-right when cursor is not at top-left. Root cause unknown after investigation; pan/zoom now uses native listeners + direct SVG style mutation (refs, no React state). Needs a fresh look.
 - `AddPOIModal` does not support setting the `faction` FK (village type) — needs a faction picker

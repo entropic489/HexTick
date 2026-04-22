@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { Map, Hex, Faction, TerrainType, WeatherType } from '../types';
+import type { Map, Hex, Faction, TerrainType, WeatherType, ActionType } from '../types';
 
 export interface PatchHexParams {
   terrain_type?: TerrainType;
@@ -30,6 +30,44 @@ export interface CreatePOIParams {
 
 export const createPOI = (hexId: number, params: CreatePOIParams) =>
   api.post<import('../types').PointOfInterest>(`/hexes/${hexId}/pois/`, params);
+
+export interface CreateFactionParams {
+  name: string;
+  color: string;
+  speed: number;
+  population: number;
+  technology: number;
+  resources: number;
+  combat_skill: number;
+  current_hex?: number | null;
+  destination?: number | null;
+  is_mobile: boolean;
+  is_player_faction: boolean;
+  is_gm_faction: boolean;
+}
+
+export const createFaction = (mapId: number, params: CreateFactionParams) =>
+  api.post<import('../types').Faction>(`/maps/${mapId}/factions/`, params);
+
+export interface PatchFactionParams {
+  name?: string;
+  color?: string;
+  speed?: number;
+  population?: number;
+  technology?: number;
+  resources?: number;
+  combat_skill?: number;
+  current_hex?: number | null;
+  destination?: number | null;
+  is_mobile?: boolean;
+  is_player_faction?: boolean;
+  is_gm_faction?: boolean;
+  next_action?: ActionType | null;
+  notes?: string;
+}
+
+export const patchFaction = (factionId: number, params: PatchFactionParams) =>
+  api.patch<import('../types').Faction>(`/factions/${factionId}/`, params);
 
 export const getMaps = () => api.get<Map[]>('/maps/');
 export const getMap = (id: number) => api.get<Map>(`/maps/${id}/`);

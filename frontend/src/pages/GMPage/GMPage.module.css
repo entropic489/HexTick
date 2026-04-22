@@ -34,6 +34,21 @@
   flex: 1;
 }
 
+.addFactionBtn {
+  padding: 0.3rem 0.75rem;
+  background: none;
+  border: 1px solid #a6e3a1;
+  border-radius: 4px;
+  color: #a6e3a1;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.addFactionBtn:hover {
+  background: #a6e3a1;
+  color: #1e1e2e;
+}
+
 .popout {
   padding: 0.3rem 0.75rem;
   background: none;

@@ -46,6 +46,7 @@ export interface Hex {
 export interface Faction {
   id: number;
   name: string;
+  color: string;
   speed: number;
   population: number;
   technology: number;
@@ -61,6 +62,8 @@ export interface Faction {
   is_famine: boolean;
   is_dying: boolean;
   max_speed: number;
+  next_action: ActionType | null;
+  notes: string;
 }
 
 export interface Party {

@@ -1,12 +1,21 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { Hex, Faction, TerrainType, WeatherType } from '../../types';
-import { patchHex } from '../../api/maps';
+import type { Hex, Faction, TerrainType, WeatherType, ActionType } from '../../types';
+import { patchHex, patchFaction } from '../../api/maps';
 import { AddPOIModal } from '../AddPOIModal/AddPOIModal';
+import { AddFactionModal } from '../AddFactionModal/AddFactionModal';
 import styles from './HexPanel.module.css';
 
 const TERRAIN_TYPES: TerrainType[] = ['plains', 'forest', 'mountain', 'swamp', 'desert', 'coast'];
 const WEATHER_TYPES: WeatherType[] = ['fair', 'unpleasant', 'inclement', 'extreme', 'catastrophic'];
+const ACTION_TYPES: ActionType[] = ['supply', 'travel', 'trade', 'merge', 'battle', 'train', 'craft', 'delve', 'search', 'explore'];
+
+interface FactionEditState {
+  notes: string;
+  destRow: string;
+  destCol: string;
+  next_action: ActionType | null;
+}
 
 interface EditState {
   terrain_type: TerrainType;
@@ -30,6 +39,7 @@ function hexToEditState(hex: Hex): EditState {
 
 interface Props {
   hex: Hex | null;
+  hexes?: Hex[];
   factions: Faction[];
   gmMode: boolean;
   prepMode?: boolean;
@@ -38,12 +48,33 @@ interface Props {
   children?: ReactNode;
 }
 
-export function HexPanel({ hex, factions, gmMode, prepMode = false, mapId, onClose, children }: Props) {
+export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, mapId, onClose, children }: Props) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditState | null>(null);
   const [addingPOI, setAddingPOI] = useState(false);
+  const [addingFaction, setAddingFaction] = useState(false);
   const [selectedPOIId, setSelectedPOIId] = useState<number | null>(null);
+  const [expandedFactionId, setExpandedFactionId] = useState<number | null>(null);
+  const [editingFactionId, setEditingFactionId] = useState<number | null>(null);
+  const [factionDraft, setFactionDraft] = useState<FactionEditState | null>(null);
+
+  const factionMutation = useMutation({
+    mutationFn: ({ id, params }: { id: number; params: FactionEditState }) => {
+      const destHex = hexes.find(
+        (h) => h.row === Number(params.destRow) && h.col === Number(params.destCol)
+      );
+      const destination = params.destRow === '' && params.destCol === ''
+        ? null
+        : (destHex?.id ?? null);
+      return patchFaction(id, { notes: params.notes, next_action: params.next_action, destination });
+    },
+    onSuccess: (_, { id }) => {
+      if (mapId != null) queryClient.invalidateQueries({ queryKey: ['factions', mapId] });
+      setEditingFactionId(null);
+      setExpandedFactionId(id);
+    },
+  });
 
   useEffect(() => {
     if (hex) {
@@ -181,6 +212,9 @@ export function HexPanel({ hex, factions, gmMode, prepMode = false, mapId, onClo
                   <button className={styles.addPoiBtn} onClick={() => setAddingPOI(true)}>
                     + Add POI
                   </button>
+                  <button className={styles.addPoiBtn} onClick={() => setAddingFaction(true)}>
+                    + Add Faction
+                  </button>
                 </div>
                 {mutation.isError && <p className={styles.error}>Save failed.</p>}
               </div>
@@ -190,6 +224,14 @@ export function HexPanel({ hex, factions, gmMode, prepMode = false, mapId, onClo
                   hexId={hex.id}
                   mapId={mapId}
                   onClose={() => setAddingPOI(false)}
+                />
+              )}
+              {addingFaction && mapId != null && (
+                <AddFactionModal
+                  mapId={mapId}
+                  hexes={hexes}
+                  defaultHexId={hex.id}
+                  onClose={() => setAddingFaction(false)}
                 />
               )}
             </>
@@ -248,13 +290,130 @@ export function HexPanel({ hex, factions, gmMode, prepMode = false, mapId, onClo
                 <section>
                   <h3>Factions present</h3>
                   <ul className={styles.factionList}>
-                    {factions.map((f) => (
-                      <li key={f.id}>
-                        <strong>{f.name}</strong> — pop {f.population}, action: {f.current_action ?? 'none'}
-                        {f.is_famine && <span className={styles.warning}> [famine]</span>}
-                        {f.is_dying && <span className={styles.danger}> [dying]</span>}
-                      </li>
-                    ))}
+                    {factions.map((f) => {
+                      const expanded = expandedFactionId === f.id;
+                      const isEditing = editingFactionId === f.id;
+                      return (
+                        <li key={f.id}>
+                          <button
+                            className={`${styles.poiRow} ${expanded ? styles.poiRowActive : ''}`}
+                            onClick={() => {
+                              setExpandedFactionId(expanded ? null : f.id);
+                              if (isEditing) setEditingFactionId(null);
+                            }}
+                          >
+                            <span
+                              className={styles.factionDot}
+                              style={{ background: f.color }}
+                            />
+                            <span className={styles.poiName}>{f.name}</span>
+                            {f.is_famine && <span className={styles.warning}>[famine]</span>}
+                            {f.is_dying && <span className={styles.danger}>[dying]</span>}
+                            <span className={styles.poiChevron}>{expanded ? '▲' : '▼'}</span>
+                          </button>
+                          {expanded && !isEditing && (
+                            <div className={styles.poiDetail}>
+                              <div className={styles.poiDetailRow}>
+                                <span>Population</span><span>{f.population}</span>
+                              </div>
+                              <div className={styles.poiDetailRow}>
+                                <span>Current action</span><span>{f.current_action ?? '—'}</span>
+                              </div>
+                              <div className={styles.poiDetailRow}>
+                                <span>Next action</span><span>{f.next_action ?? '—'}</span>
+                              </div>
+                              <div className={styles.poiDetailRow}>
+                                <span>Destination</span>
+                                <span>
+                                  {f.destination
+                                    ? hexes.find((h) => h.id === f.destination)
+                                      ? `(${hexes.find((h) => h.id === f.destination)!.row}, ${hexes.find((h) => h.id === f.destination)!.col})`
+                                      : `hex ${f.destination}`
+                                    : '—'}
+                                </span>
+                              </div>
+                              {f.notes && <p className={styles.notes}>{f.notes}</p>}
+                              <button
+                                className={styles.editBtn}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const destHex = hexes.find((h) => h.id === f.destination);
+                                  setFactionDraft({ notes: f.notes, destRow: destHex ? String(destHex.row) : '', destCol: destHex ? String(destHex.col) : '', next_action: f.next_action });
+                                  setEditingFactionId(f.id);
+                                }}
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          )}
+                          {expanded && isEditing && factionDraft && (
+                            <div className={styles.poiDetail}>
+                              <label className={styles.factionEditLabel}>
+                                <span>Next action</span>
+                                <select
+                                  className={styles.select}
+                                  value={factionDraft.next_action ?? ''}
+                                  onChange={(e) => setFactionDraft((d) => d && { ...d, next_action: (e.target.value as ActionType) || null })}
+                                >
+                                  <option value="">—</option>
+                                  {ACTION_TYPES.map((a) => (
+                                    <option key={a} value={a}>{a}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <div className={styles.factionEditLabel}>
+                                <span>Destination (row, col)</span>
+                                <div className={styles.destInputs}>
+                                  <input
+                                    className={styles.input}
+                                    type="number"
+                                    placeholder="row"
+                                    value={factionDraft.destRow}
+                                    onChange={(e) => setFactionDraft((d) => d && { ...d, destRow: e.target.value })}
+                                  />
+                                  <input
+                                    className={styles.input}
+                                    type="number"
+                                    placeholder="col"
+                                    value={factionDraft.destCol}
+                                    onChange={(e) => setFactionDraft((d) => d && { ...d, destCol: e.target.value })}
+                                  />
+                                </div>
+                                {(factionDraft.destRow !== '' || factionDraft.destCol !== '') &&
+                                  !hexes.find((h) => h.row === Number(factionDraft.destRow) && h.col === Number(factionDraft.destCol)) && (
+                                  <span className={styles.destError}>No hex at these coordinates</span>
+                                )}
+                              </div>
+                              <label className={styles.factionEditLabel}>
+                                <span>Notes</span>
+                                <textarea
+                                  className={styles.textarea}
+                                  value={factionDraft.notes}
+                                  rows={3}
+                                  onChange={(e) => setFactionDraft((d) => d && { ...d, notes: e.target.value })}
+                                />
+                              </label>
+                              <div className={styles.factionEditActions}>
+                                <button
+                                  className={styles.saveBtn}
+                                  disabled={factionMutation.isPending}
+                                  onClick={() => factionMutation.mutate({ id: f.id, params: factionDraft })}
+                                >
+                                  {factionMutation.isPending ? 'Saving…' : 'Save'}
+                                </button>
+                                <button
+                                  className={styles.cancelBtn}
+                                  onClick={() => setEditingFactionId(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                              {factionMutation.isError && <p className={styles.error}>Save failed.</p>}
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </section>
               )}
