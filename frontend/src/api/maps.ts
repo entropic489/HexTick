@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { Map, Hex, Faction, TerrainType, WeatherType, ActionType } from '../types';
+import type { Map, Hex, Faction, Knowledge, TerrainType, WeatherType, ActionType } from '../types';
 
 export interface PatchHexParams {
   terrain_type?: TerrainType;
@@ -62,8 +62,12 @@ export interface PatchFactionParams {
   is_mobile?: boolean;
   is_player_faction?: boolean;
   is_gm_faction?: boolean;
+  agreeableness?: number;
+  theology?: number;
   next_action?: ActionType | null;
   notes?: string;
+  knowledge?: number[];
+  leader?: number | null;
 }
 
 export const patchFaction = (factionId: number, params: PatchFactionParams) =>
@@ -73,6 +77,78 @@ export const getMaps = () => api.get<Map[]>('/maps/');
 export const getMap = (id: number) => api.get<Map>(`/maps/${id}/`);
 export const getHexes = (mapId: number) => api.get<Hex[]>(`/maps/${mapId}/hexes/`);
 export const getFactions = (mapId: number) => api.get<Faction[]>(`/maps/${mapId}/factions/`);
+
+export interface PatchKnowledgeParams {
+  title?: string;
+  description?: string;
+  do_players_know?: boolean;
+  age?: number;
+  related_knowledge?: number[];
+}
+
+export interface CreateKnowledgeParams {
+  title: string;
+  description?: string;
+  do_players_know?: boolean;
+  age?: number;
+  related_knowledge?: number[];
+}
+
+export const getKnowledge = (mapId: number) => api.get<Knowledge[]>(`/maps/${mapId}/knowledge/`);
+export const createKnowledge = (mapId: number, params: CreateKnowledgeParams) =>
+  api.post<Knowledge>(`/maps/${mapId}/knowledge/`, params);
+export const patchKnowledge = (id: number, params: PatchKnowledgeParams) =>
+  api.patch<Knowledge>(`/knowledge/${id}/`, params);
+
+export interface CreateCharacterParams {
+  name: string;
+  age?: number | null;
+  faction?: number | null;
+  is_player?: boolean;
+  is_leader?: boolean;
+  is_wanderer?: boolean;
+  can_merge?: boolean;
+  combat_skill?: number;
+  speed?: number;
+  max_speed?: number;
+  scouting?: number;
+  resource_generation?: number;
+  ration_limit?: number;
+  rations?: number;
+  current_hex?: number | null;
+  notes?: string;
+  drive?: string;
+  knowledge?: number[];
+}
+
+export interface PatchCharacterParams {
+  name?: string;
+  age?: number | null;
+  faction?: number | null;
+  is_player?: boolean;
+  is_leader?: boolean;
+  is_wanderer?: boolean;
+  is_dead?: boolean;
+  can_merge?: boolean;
+  combat_skill?: number;
+  speed?: number;
+  max_speed?: number;
+  scouting?: number;
+  resource_generation?: number;
+  ration_limit?: number;
+  rations?: number;
+  current_hex?: number | null;
+  destination?: number | null;
+  notes?: string;
+  drive?: string;
+  knowledge?: number[];
+}
+
+export const getCharacters = (mapId: number) => api.get<import('../types').Character[]>(`/maps/${mapId}/characters/`);
+export const createCharacter = (mapId: number, params: CreateCharacterParams) =>
+  api.post<import('../types').Character>(`/maps/${mapId}/characters/`, params);
+export const patchCharacter = (id: number, params: PatchCharacterParams) =>
+  api.patch<import('../types').Character>(`/characters/${id}/`, params);
 
 export interface CreateMapParams {
   name: string;

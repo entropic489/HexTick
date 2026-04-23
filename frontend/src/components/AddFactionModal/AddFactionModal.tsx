@@ -23,6 +23,7 @@ interface Draft {
   is_mobile: boolean;
   is_player_faction: boolean;
   is_gm_faction: boolean;
+  agreeableness: number;
 }
 
 const DEFAULT_DRAFT: Draft = {
@@ -37,6 +38,7 @@ const DEFAULT_DRAFT: Draft = {
   is_mobile: true,
   is_player_faction: false,
   is_gm_faction: false,
+  agreeableness: 0,
 };
 
 function hexLabel(hex: Hex): string {
@@ -139,6 +141,11 @@ export function AddFactionModal({ mapId, hexes, defaultHexId, onClose }: Props) 
             <span className={styles.label}>Combat skill</span>
             <input className={styles.input} type="number" min={0} value={draft.combat_skill}
               onChange={(e) => set('combat_skill', Number(e.target.value))} />
+          </div>
+          <div className={styles.row}>
+            <span className={styles.label}>Agreeableness</span>
+            <input className={styles.input} type="number" value={draft.agreeableness}
+              onChange={(e) => set('agreeableness', Number(e.target.value))} />
           </div>
 
           <div className={styles.checks}>

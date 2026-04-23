@@ -1,15 +1,17 @@
 from typing import Optional
+from django.db.models import Q
 from ninja import NinjaAPI, Schema, File, Form
 from ninja.files import UploadedFile
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 from world.models import Map, Hex, PointOfInterest, Faction, Tick, FactionTick, PartyTick
+from world.models.characters import Knowledge
 from world.models.settings import WorldSettings
 from world.models.characters import Character
 from world.models.party import Party
 from world.models.faction import Action
 from world.actions import tick_hex, tick_faction, tick_character
-from world.utils import hex_distance, modifier
+from world.utils import hex_distance, modifier, adjacent_hexes
 
 api = NinjaAPI(urls_namespace="api")
 
@@ -177,11 +179,17 @@ class FactionSchema(Schema):
     is_mobile: bool
     is_player_faction: bool
     is_gm_faction: bool
+    is_dead: bool
     is_famine: bool
     is_dying: bool
     max_speed: int
+    agreeableness: int
+    theology: int
+    technology_max: int
     next_action: Optional[str] = None
     notes: str = ''
+    knowledge: list[int] = []
+    leader: Optional[int] = None
 
     @staticmethod
     def resolve_current_hex(obj):
@@ -190,6 +198,14 @@ class FactionSchema(Schema):
     @staticmethod
     def resolve_destination(obj):
         return obj.destination_id
+
+    @staticmethod
+    def resolve_knowledge(obj):
+        return [k.id for k in obj.knowledge.all()]
+
+    @staticmethod
+    def resolve_leader(obj):
+        return obj.leader_id
 
 
 class FactionCreateSchema(Schema):
@@ -205,13 +221,15 @@ class FactionCreateSchema(Schema):
     is_mobile: bool = True
     is_player_faction: bool = False
     is_gm_faction: bool = False
+    agreeableness: int = 0
+    theology: int = 90
     notes: str = ''
 
 
 @api.get("/maps/{map_id}/factions/", response=list[FactionSchema])
 def list_factions(request, map_id: int):
     get_object_or_404(Map, id=map_id)
-    return list(Faction.objects.filter(current_hex__map_id=map_id))
+    return list(Faction.objects.filter(current_hex__map_id=map_id).prefetch_related('knowledge'))
 
 
 class FactionPatchSchema(Schema):
@@ -227,8 +245,12 @@ class FactionPatchSchema(Schema):
     is_mobile: Optional[bool] = None
     is_player_faction: Optional[bool] = None
     is_gm_faction: Optional[bool] = None
+    agreeableness: Optional[int] = None
+    theology: Optional[int] = None
     next_action: Optional[str] = None
     notes: Optional[str] = None
+    knowledge: Optional[list[int]] = None
+    leader: Optional[int] = None
 
 
 @api.patch("/factions/{faction_id}/", response=FactionSchema)
@@ -242,9 +264,15 @@ def patch_faction(request, faction_id: int, body: FactionPatchSchema):
     if 'destination' in data:
         dest_id = data.pop('destination')
         faction.destination = get_object_or_404(Hex, id=dest_id) if dest_id is not None else None
+    if 'leader' in data:
+        leader_id = data.pop('leader')
+        faction.leader = get_object_or_404(Character, id=leader_id) if leader_id is not None else None
+    knowledge_ids = data.pop('knowledge', None)
     for field, value in data.items():
         setattr(faction, field, value)
     faction.save()
+    if knowledge_ids is not None:
+        faction.knowledge.set(Knowledge.objects.filter(id__in=knowledge_ids))
     return faction
 
 
@@ -267,8 +295,220 @@ def create_faction(request, map_id: int, body: FactionCreateSchema):
         is_mobile=body.is_mobile,
         is_player_faction=body.is_player_faction,
         is_gm_faction=body.is_gm_faction,
+        agreeableness=body.agreeableness,
+        theology=body.theology,
     )
     return faction
+
+
+# --- Knowledge ---
+
+class KnowledgeRefSchema(Schema):
+    id: int
+    title: str
+
+
+class KnowledgeSchema(Schema):
+    id: int
+    title: str
+    description: str
+    do_players_know: bool
+    age: int
+    related_knowledge: list[KnowledgeRefSchema]
+
+    @staticmethod
+    def resolve_related_knowledge(obj):
+        return list(obj.related_knowledge.all())
+
+
+class KnowledgePatchSchema(Schema):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    do_players_know: Optional[bool] = None
+    age: Optional[int] = None
+    related_knowledge: Optional[list[int]] = None
+
+
+class KnowledgeCreateSchema(Schema):
+    title: str
+    description: str = ''
+    do_players_know: bool = False
+    age: int = 4
+    related_knowledge: list[int] = []
+
+
+@api.get("/maps/{map_id}/knowledge/", response=list[KnowledgeSchema])
+def list_knowledge(request, map_id: int):
+    get_object_or_404(Map, id=map_id)
+    return list(Knowledge.objects.filter(map_id=map_id).prefetch_related('related_knowledge'))
+
+
+@api.post("/maps/{map_id}/knowledge/", response=KnowledgeSchema)
+@transaction.atomic
+def create_knowledge(request, map_id: int, body: KnowledgeCreateSchema):
+    map_obj = get_object_or_404(Map, id=map_id)
+    obj = Knowledge.objects.create(
+        map=map_obj,
+        title=body.title,
+        description=body.description,
+        do_players_know=body.do_players_know,
+        age=body.age,
+    )
+    if body.related_knowledge:
+        obj.related_knowledge.set(Knowledge.objects.filter(id__in=body.related_knowledge))
+    return obj
+
+
+@api.patch("/knowledge/{knowledge_id}/", response=KnowledgeSchema)
+@transaction.atomic
+def patch_knowledge(request, knowledge_id: int, body: KnowledgePatchSchema):
+    obj = get_object_or_404(Knowledge, id=knowledge_id)
+    data = body.dict(exclude_unset=True)
+    related_ids = data.pop('related_knowledge', None)
+    for field, value in data.items():
+        setattr(obj, field, value)
+    obj.save()
+    if related_ids is not None:
+        obj.related_knowledge.set(Knowledge.objects.filter(id__in=related_ids))
+    obj.related_knowledge.all()  # prefetch for resolver
+    return obj
+
+
+# --- Characters ---
+
+class CharacterSchema(Schema):
+    id: int
+    name: str
+    age: Optional[int]
+    faction: Optional[int]
+    is_player: bool
+    is_leader: bool
+    is_wanderer: bool
+    is_dead: bool
+    can_merge: bool
+    combat_skill: int
+    speed: int
+    max_speed: int
+    scouting: int
+    resource_generation: int
+    ration_limit: int
+    rations: int
+    famine_streak: int
+    current_hex: Optional[int]
+    destination: Optional[int]
+    notes: str
+    drive: str
+    knowledge: list[int] = []
+
+    @staticmethod
+    def resolve_faction(obj):
+        return obj.faction_id
+
+    @staticmethod
+    def resolve_current_hex(obj):
+        return obj.current_hex_id
+
+    @staticmethod
+    def resolve_destination(obj):
+        return obj.destination_id
+
+    @staticmethod
+    def resolve_knowledge(obj):
+        return [k.id for k in obj.knowledge.all()]
+
+
+class CharacterCreateSchema(Schema):
+    name: str
+    age: Optional[int] = None
+    faction: Optional[int] = None
+    is_player: bool = False
+    is_leader: bool = False
+    is_wanderer: bool = False
+    can_merge: bool = True
+    combat_skill: int = 10
+    speed: int = 0
+    max_speed: int = 4
+    scouting: int = 0
+    resource_generation: int = 1
+    ration_limit: int = 5
+    rations: int = 0
+    current_hex: Optional[int] = None
+    notes: str = ''
+    drive: str = ''
+    knowledge: list[int] = []
+
+
+class CharacterPatchSchema(Schema):
+    name: Optional[str] = None
+    age: Optional[int] = None
+    faction: Optional[int] = None
+    is_player: Optional[bool] = None
+    is_leader: Optional[bool] = None
+    is_wanderer: Optional[bool] = None
+    is_dead: Optional[bool] = None
+    can_merge: Optional[bool] = None
+    combat_skill: Optional[int] = None
+    speed: Optional[int] = None
+    max_speed: Optional[int] = None
+    scouting: Optional[int] = None
+    resource_generation: Optional[int] = None
+    ration_limit: Optional[int] = None
+    rations: Optional[int] = None
+    current_hex: Optional[int] = None
+    destination: Optional[int] = None
+    notes: Optional[str] = None
+    drive: Optional[str] = None
+    knowledge: Optional[list[int]] = None
+
+
+@api.get("/maps/{map_id}/characters/", response=list[CharacterSchema])
+def list_characters(request, map_id: int):
+    get_object_or_404(Map, id=map_id)
+    return list(Character.objects.filter(
+        Q(current_hex__map_id=map_id) | Q(faction__current_hex__map_id=map_id)
+    ).distinct().prefetch_related('knowledge'))
+
+
+@api.post("/maps/{map_id}/characters/", response=CharacterSchema)
+@transaction.atomic
+def create_character(request, map_id: int, body: CharacterCreateSchema):
+    get_object_or_404(Map, id=map_id)
+    data = body.dict(exclude_unset=True)
+    faction_id = data.pop('faction', None)
+    current_hex_id = data.pop('current_hex', None)
+    knowledge_ids = data.pop('knowledge', [])
+    char = Character(**data)
+    if faction_id is not None:
+        char.faction = get_object_or_404(Faction, id=faction_id)
+    if current_hex_id is not None:
+        char.current_hex = get_object_or_404(Hex, id=current_hex_id)
+    char.save()
+    if knowledge_ids:
+        char.knowledge.set(Knowledge.objects.filter(id__in=knowledge_ids))
+    return char
+
+
+@api.patch("/characters/{character_id}/", response=CharacterSchema)
+@transaction.atomic
+def patch_character(request, character_id: int, body: CharacterPatchSchema):
+    char = get_object_or_404(Character, id=character_id)
+    data = body.dict(exclude_unset=True)
+    if 'faction' in data:
+        fid = data.pop('faction')
+        char.faction = get_object_or_404(Faction, id=fid) if fid is not None else None
+    if 'current_hex' in data:
+        hid = data.pop('current_hex')
+        char.current_hex = get_object_or_404(Hex, id=hid) if hid is not None else None
+    if 'destination' in data:
+        did = data.pop('destination')
+        char.destination = get_object_or_404(Hex, id=did) if did is not None else None
+    knowledge_ids = data.pop('knowledge', None)
+    for field, value in data.items():
+        setattr(char, field, value)
+    char.save()
+    if knowledge_ids is not None:
+        char.knowledge.set(Knowledge.objects.filter(id__in=knowledge_ids))
+    return char
 
 
 # --- Tick ---
@@ -298,7 +538,7 @@ def _run_shift(map_id: int) -> tuple[int, list[dict]]:
     settings.save()
 
     hexes = list(Hex.objects.filter(map_id=map_id).prefetch_related('pois'))
-    factions = list(Faction.objects.filter(current_hex__map_id=map_id))
+    factions = list(Faction.objects.filter(current_hex__map_id=map_id, is_dead=False))
 
     for hex in hexes:
         tick_hex(hex, tick)
@@ -312,7 +552,8 @@ def _run_shift(map_id: int) -> tuple[int, list[dict]]:
             and faction.current_hex
             and hex_distance(faction.current_hex, f.current_hex) <= modifier(faction.scouting)
         ]
-        ft = tick_faction(faction, tick, nearby, hexes)
+        candidates = adjacent_hexes(faction.current_hex, hexes) if faction.current_hex else []
+        ft = tick_faction(faction, tick, nearby, candidates)
         faction_ticks.append((faction, ft))
 
     factions_by_hex: dict[int, list[Faction]] = {}

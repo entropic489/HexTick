@@ -6,7 +6,7 @@ import { AddPOIModal } from '../AddPOIModal/AddPOIModal';
 import { AddFactionModal } from '../AddFactionModal/AddFactionModal';
 import styles from './HexPanel.module.css';
 
-const TERRAIN_TYPES: TerrainType[] = ['plains', 'forest', 'mountain', 'swamp', 'desert', 'coast'];
+const TERRAIN_TYPES: TerrainType[] = ['plains', 'forest', 'mountain', 'swamp', 'desert', 'coast', 'ocean'];
 const WEATHER_TYPES: WeatherType[] = ['fair', 'unpleasant', 'inclement', 'extreme', 'catastrophic'];
 const ACTION_TYPES: ActionType[] = ['supply', 'travel', 'trade', 'merge', 'battle', 'train', 'craft', 'delve', 'search', 'explore'];
 
@@ -15,6 +15,7 @@ interface FactionEditState {
   destRow: string;
   destCol: string;
   next_action: ActionType | null;
+  agreeableness: number;
 }
 
 interface EditState {
@@ -67,7 +68,7 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
       const destination = params.destRow === '' && params.destCol === ''
         ? null
         : (destHex?.id ?? null);
-      return patchFaction(id, { notes: params.notes, next_action: params.next_action, destination });
+      return patchFaction(id, { notes: params.notes, next_action: params.next_action, destination, agreeableness: params.agreeableness });
     },
     onSuccess: (_, { id }) => {
       if (mapId != null) queryClient.invalidateQueries({ queryKey: ['factions', mapId] });
@@ -317,6 +318,24 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                                 <span>Population</span><span>{f.population}</span>
                               </div>
                               <div className={styles.poiDetailRow}>
+                                <span>Resources</span><span>{f.resources}</span>
+                              </div>
+                              <div className={styles.poiDetailRow}>
+                                <span>Agreeableness</span><span>{f.agreeableness}</span>
+                              </div>
+                              <div className={styles.poiDetailRow}>
+                                <span>Combat skill</span><span>{f.combat_skill}</span>
+                              </div>
+                              <div className={styles.poiDetailRow}>
+                                <span>Theology</span><span>{f.theology}</span>
+                              </div>
+                              <div className={styles.poiDetailRow}>
+                                <span>Technology</span><span>{f.technology} / {f.technology_max}</span>
+                              </div>
+                              <div className={styles.poiDetailRow}>
+                                <span>Speed</span><span>{f.speed}</span>
+                              </div>
+                              <div className={styles.poiDetailRow}>
                                 <span>Current action</span><span>{f.current_action ?? '—'}</span>
                               </div>
                               <div className={styles.poiDetailRow}>
@@ -338,7 +357,7 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   const destHex = hexes.find((h) => h.id === f.destination);
-                                  setFactionDraft({ notes: f.notes, destRow: destHex ? String(destHex.row) : '', destCol: destHex ? String(destHex.col) : '', next_action: f.next_action });
+                                  setFactionDraft({ notes: f.notes, destRow: destHex ? String(destHex.row) : '', destCol: destHex ? String(destHex.col) : '', next_action: f.next_action, agreeableness: f.agreeableness });
                                   setEditingFactionId(f.id);
                                 }}
                               >
@@ -384,6 +403,15 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                                   <span className={styles.destError}>No hex at these coordinates</span>
                                 )}
                               </div>
+                              <label className={styles.factionEditLabel}>
+                                <span>Agreeableness</span>
+                                <input
+                                  className={styles.input}
+                                  type="number"
+                                  value={factionDraft.agreeableness}
+                                  onChange={(e) => setFactionDraft((d) => d && { ...d, agreeableness: Number(e.target.value) })}
+                                />
+                              </label>
                               <label className={styles.factionEditLabel}>
                                 <span>Notes</span>
                                 <textarea

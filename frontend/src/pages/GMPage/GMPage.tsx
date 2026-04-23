@@ -48,6 +48,18 @@ export function GMPage() {
           Factions
         </button>
         <button
+          className={styles.addFactionBtn}
+          onClick={() => navigate(`/map/${id}/knowledge`)}
+        >
+          Knowledge
+        </button>
+        <button
+          className={styles.addFactionBtn}
+          onClick={() => navigate(`/map/${id}/characters`)}
+        >
+          Characters
+        </button>
+        <button
           className={styles.popout}
           onClick={() => window.open(`/map/${id}/player`, '_blank', 'width=1024,height=768')}
         >

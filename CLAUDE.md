@@ -38,7 +38,7 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
     world/                      # The only Django app
       models/
         __init__.py             # re-exports everything; import from here
-        world.py                # Map
+        world.py                # Map, AgeChoices
         hex.py                  # Hex, TerrainType, WeatherType, POIType, PointOfInterest
         faction.py              # Faction, Action, DiseaseType, ActiveDisease
         characters.py           # Item, Knowledge, Character, CharacterTick
@@ -48,7 +48,7 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
       api.py                    # Django Ninja API — all endpoints live here
       actions.py                # ALL game logic — tick, actions, encounters, diseases
       admin.py
-      utils.py                  # modifier(), hex_distance()
+      utils.py                  # modifier(), hex_distance(), adjacent_hexes()
   frontend/                     # Vite React app
     src/
       api/                      # fetch wrappers (client.ts, maps.ts, tick.ts)
@@ -84,6 +84,8 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 
 **DB queries stay out of the engine.** `tick_faction`, `tick_hex`, `tick_character` accept pre-fetched lists (`nearby_factions`, `candidate_hexes`, `factions_on_hex`). Don't add queries inside these functions.
 
+**Migrations must be run by the user.** Never run `makemigrations` or `migrate` automatically. After model changes, instruct the user to run: `cd backend && pdm run python manage.py makemigrations && pdm run python manage.py migrate`.
+
 ---
 
 ## Hex coordinate system
@@ -101,6 +103,8 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 ---
 
 ## Non-obvious quirks
+
+**`AgeChoices` lives in `world.py`**, not alongside the models that use it. `PointOfInterest.age` and `Knowledge.age` both import from there.
 
 **`TerrainType` is not a `TextChoices` enum.** It's a custom `str` subclass with `terrain_difficulty` and `resource_generation` as instance attributes. Use `TerrainType.from_value(str)` to look up by DB value. `terrain_difficulty` and `resource_generation` on `Hex` are `@property` — do not add them as DB columns.
 
@@ -124,15 +128,19 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 | `is_gm_faction = True` | No | GM sets action via frontend modal |
 | neither | Yes | `_select_action` runs each tick |
 
+Dead factions (`is_dead = True`, set when `population <= 0`) are excluded from `_run_shift` entirely and do not tick.
+
 ## `_select_action` priority (NPC factions only)
 
-1. `faction.destination` set → travel, detouring around disagreeable factions (`agreeableness < 50`)
-2. Disagreeable faction in scouting range AND `last_action != BATTLE` → battle (same hex) or set destination and travel
-3. Outmatched (`combat_skill < closest.combat_skill`) → flee
+Travel always moves one adjacent hex per tick (via `adjacent_hexes()`), never teleports. `travel()` falls back to supply/train if `faction.speed < terrain_difficulty`.
+
+1. `faction.destination` set → step one adjacent hex toward destination, detouring around disagreeable factions (`agreeableness < 50`). Clears destination on arrival.
+2. Disagreeable faction in scouting range AND `last_action != BATTLE` → battle (same hex) or step toward them
+3. Outmatched (`combat_skill < closest.combat_skill`) → flee to best adjacent hex
 4. `agreeableness < 0` and not outmatched → battle
 5. `closest.agreeableness >= 0` AND `last_action != TRADE` → trade
 6. `comfort(hex.resources) >= 0` → supply
-7. `comfort < 0` → travel to best hex (min `terrain_difficulty - resources`)
+7. `comfort < 0` → travel to best adjacent hex (min `terrain_difficulty - resources`)
 8. Dungeon on hex (`hidden=False`) AND `resources > population` AND `d12 - modifier(theology) >= 9` → delve
 9. `resources > population` AND `technology_max - technology > 10` → craft
 10. Default → train
@@ -159,9 +167,33 @@ The GM view has two modes toggled by the **Prep / Play** button in the top bar. 
 
 **POI detail expand** — in view mode, each POI row is a clickable button. Clicking toggles an inline detail panel showing difficulty, description, GM notes, and visible/explored flags. Click again to collapse.
 
-**Add Faction** — the `+ Add Faction` button in edit mode opens `AddFactionModal`. Fields: name, color (hex color picker + text), speed, population, technology, resources, combat_skill, location (current hex, defaults to the selected hex), and faction type flags (mobile, GM faction, player faction). Destination is not set at creation. Created via `POST /maps/{map_id}/factions/`.
+**Add Faction** — the `+ Add Faction` button in edit mode opens `AddFactionModal`. Fields: name, color (hex color picker + text), speed, population, technology, resources, combat_skill, agreeableness, theology, location (current hex, defaults to the selected hex), and faction type flags (mobile, GM faction, player faction). Destination is not set at creation. Created via `POST /maps/{map_id}/factions/`.
 
 **Faction arrows** — rendered in `HexMap` as an SVG layer above hex cells. Each faction with a `current_hex` gets a three-layer arrow (glow halo + solid shaft + white highlight, with a custom arrowhead marker per color). Factions with a `destination` draw a movement arrow from their hex to the destination; factions without a destination draw a short upward arrow on their hex. The 2-letter label in each hex also uses the faction's color.
+
+---
+
+## Knowledge
+
+`Knowledge` has a `map` FK (`CASCADE`). The frontend page lives at `/map/:mapId/knowledge` and fetches only knowledge for that map.
+
+`related_knowledge` is a **directional** (asymmetrical) self-referential M2M. A→B does not imply B→A. The API accepts a list of IDs on both `POST /knowledge/` and `PATCH /knowledge/{id}/` and calls `.set()` to replace the full relation.
+
+Both `Faction` and `Character` have a `knowledge` M2M to `Knowledge`. Exposed as `list[int]` (IDs) on their schemas. Editable via `PATCH /api/factions/{id}/` and `PATCH /api/characters/{id}/` by passing a `knowledge` list — replaces the full relation with `.set()`.
+
+The `KnowledgePage` is a GM-only view (linked from the GMPage header). No player-facing knowledge UI exists.
+
+---
+
+## Characters
+
+`Character` lives in `models/characters.py`. Characters belong to a `Faction` (FK, nullable) and optionally have a `current_hex`. The list endpoint returns characters where `current_hex` or `faction.current_hex` is on the requested map.
+
+**API**: `GET /maps/{map_id}/characters/`, `POST /maps/{map_id}/characters/`, `PATCH /characters/{id}/`.
+
+**Frontend**: `CharactersPage` at `/map/:mapId/characters`, linked from the GMPage header. Inline edit row (all fields) + create modal. Knowledge multi-select uses the same `KnowledgeDropdown` pattern as `KnowledgePage`.
+
+**`resolve_knowledge` pattern** — both `FactionSchema` and `CharacterSchema` resolve knowledge IDs as `[k.id for k in obj.knowledge.all()]`. Do NOT use `.values_list()` here — it bypasses the prefetch cache and causes N+1 queries. The list endpoints use `.prefetch_related('knowledge')` and a single `Q`-filtered queryset (not `|` union) to avoid Django's "cannot combine unique with non-unique" error.
 
 ---
 
@@ -175,14 +207,13 @@ The GM view has two modes toggled by the **Prep / Play** button in the top bar. 
 
 **Backend**
 - `FactionTick` does not snapshot `last_action`, `next_action`, `notes`, `is_gm_faction`, or `is_player_faction`
-- `Knowledge` FK on `Character` is commented out — pending decision on whether characters carry knowledge directly
 - `update_character_visibility()` is not called anywhere in the tick flow — needs a home in step 6 of `_run_shift`
 
 **Frontend**
 - "Show on map" on the Factions page selects the faction's hex but does not pan/zoom to it. Programmatic pan requires exposing the ref-based transform in `HexMap` — deferred.
 - `PlayerPage` passes `playerFaction.id` as the party ID to `POST /api/party/{id}/action/` — should be `Party.id`. Needs a party fetch in the component.
 - Party action radial menu (Search, Move, Explore, Supply) not yet built
-- GM faction action-setting modal not yet built — `next_action`, `destination`, and `notes` are now editable from the HexPanel faction expand/edit, but a dedicated modal for full faction management is not built
+- GM faction action-setting modal not yet built — `next_action`, `destination`, `notes`, and `agreeableness` are now editable from the HexPanel faction expand/edit, but a dedicated modal for full faction management is not built
 - `patchPartyTickNotes` wired in `api/tick.ts` but no UI to trigger it
 - HexMap scroll-to-zoom is broken — anchor drifts toward bottom-right when cursor is not at top-left. Root cause unknown after investigation; pan/zoom now uses native listeners + direct SVG style mutation (refs, no React state). Needs a fresh look.
 - `AddPOIModal` does not support setting the `faction` FK (village type) — needs a faction picker

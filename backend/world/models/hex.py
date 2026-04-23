@@ -1,6 +1,6 @@
 from django.db import models
 
-from .world import Map
+from .world import AgeChoices, Map
 
 
 class TerrainType(str):
@@ -23,6 +23,7 @@ class TerrainType(str):
     SWAMP    = None
     DESERT   = None
     COAST    = None
+    OCEAN    = None
 
     @classmethod
     def choices(cls):
@@ -42,7 +43,8 @@ _TERRAIN_TYPES = [
     TerrainType('mountain', 'Mountain', terrain_difficulty=4, resource_generation=0),
     TerrainType('swamp',    'Swamp',    terrain_difficulty=4, resource_generation=3),
     TerrainType('desert',   'Desert',   terrain_difficulty=2, resource_generation=0),
-    TerrainType('coast',    'Coast',    terrain_difficulty=1, resource_generation=2),
+    TerrainType('coast',    'Coast',    terrain_difficulty=1,  resource_generation=2),
+    TerrainType('ocean',    'Ocean',    terrain_difficulty=10, resource_generation=0),
 ]
 
 TerrainType.PLAINS   = _TERRAIN_TYPES[0]
@@ -51,6 +53,7 @@ TerrainType.MOUNTAIN = _TERRAIN_TYPES[2]
 TerrainType.SWAMP    = _TERRAIN_TYPES[3]
 TerrainType.DESERT   = _TERRAIN_TYPES[4]
 TerrainType.COAST    = _TERRAIN_TYPES[5]
+TerrainType.OCEAN    = _TERRAIN_TYPES[6]
 
 
 class POIType(models.TextChoices):
@@ -127,7 +130,7 @@ class PointOfInterest(models.Model):
     # Monster Base
     monster_type = models.CharField(max_length=100, blank=True, default='')
 
-    age = models.IntegerField(default=4)
+    age = models.IntegerField(choices=AgeChoices.choices, default=AgeChoices.DYING)
 
     player_visible = models.BooleanField(default=False)
     player_explored = models.BooleanField(default=False)

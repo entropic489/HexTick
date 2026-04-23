@@ -29,21 +29,30 @@ def _select_action(
 
     # GM-set destination: steer around disagreeable factions on the current hex
     if faction.destination:
-        blocking = [
-            f for f in nearby_factions
-            if f.current_hex == faction.current_hex
-            and f.agreeableness < 50
-            and faction.last_action != Action.BATTLE
-        ]
-        if blocking:
-            detour = min(
-                (h for h in candidate_hexes if all(f.current_hex != h for f in blocking)),
+        if faction.current_hex == faction.destination:
+            faction.destination = None
+            faction.save()
+        else:
+            blocking = [
+                f for f in nearby_factions
+                if f.current_hex == faction.current_hex
+                and f.agreeableness < 50
+                and faction.last_action != Action.BATTLE
+            ]
+            step = min(
+                candidate_hexes,
                 key=lambda h: hex_distance(h, faction.destination),
                 default=None,
             )
-            if detour:
+            if blocking and step:
+                detour = min(
+                    (h for h in candidate_hexes if all(f.current_hex != h for f in blocking)),
+                    key=lambda h: hex_distance(h, faction.destination),
+                    default=step,
+                )
                 return travel(faction, detour)
-        return travel(faction, faction.destination)
+            if step:
+                return travel(faction, step)
 
     # Resolve nearest faction within scouting range
     in_range = [
@@ -53,12 +62,18 @@ def _select_action(
     if in_range:
         closest = min(in_range, key=lambda f: hex_distance(hex, f.current_hex))
         outmatched = faction.combat_skill < closest.combat_skill
-        if faction.last_action != Action.BATTLE and faction.agreeableness < 50:
+        if faction.last_action != Action.BATTLE and faction.agreeableness < 0:
             if faction.current_hex == closest.current_hex:
                 return battle(faction, closest)
             else:
                 faction.destination = closest.current_hex
-                return travel(faction, closest.current_hex)
+                step = min(
+                    candidate_hexes,
+                    key=lambda h: hex_distance(h, closest.current_hex),
+                    default=None,
+                )
+                if step:
+                    return travel(faction, step)
         if outmatched:
             best = max(
                 candidate_hexes,
@@ -76,26 +91,25 @@ def _select_action(
             return battle(faction, closest)
 
     # Stay and supply if the hex is comfortable; travel if not
-    if hex:
-        if faction.comfort(hex.resources) >= 0:
-            return supply(faction, hex)
-        else:
-            best = min(
-                candidate_hexes,
-                key=lambda h: h.terrain_difficulty - h.resources,
-                default=None,
-            )
-            if best:
-                return travel(faction, best)
+    if faction.comfort(hex.resources) >= 0:
+        return supply(faction, hex)
+    else:
+        best = min(
+            candidate_hexes,
+            key=lambda h: h.terrain_difficulty - h.resources,
+            default=None,
+        )
+        if best:
+            return travel(faction, best)
 
     # Delve if there's a dungeon, resources cover next round, and theology check passes
     dungeon = hex.pois.filter(poi_type='dungeon', hidden=False).first()
-    if dungeon and faction.resources > faction.population:
+    if dungeon and faction.resources > modifier(faction.population):
         if random.randint(1, 12) - modifier(faction.theology) >= 9:
             return delve(faction, dungeon)
 
     # Craft or train based on tech headroom
-    if faction.resources > faction.population and (faction.technology_max - faction.technology) > 10:
+    if faction.resources > modifier(faction.population) and (faction.technology_max - faction.technology) > 10:
         return craft(faction)
 
     return train(faction)
@@ -111,6 +125,7 @@ def tick_faction(
         result = _select_action(faction, nearby_factions, candidate_hexes)
         faction.last_action = faction.current_action
         faction.current_action = result.action
+        faction.next_action = None
     else:
         result = ActionResult(action=faction.current_action)
         faction.last_action = faction.current_action
@@ -140,6 +155,9 @@ def tick_faction(
         elif roll >= 18:
             faction.population += 1
 
+    if faction.population <= 0 and not faction.is_dead:
+        faction.population = 0
+        faction.is_dead = True
     faction.save()
     apply_diseases(faction)
 
@@ -421,6 +439,8 @@ def random_encounter(faction: Faction, hex: Hex) -> str:
 
 def travel(faction: Faction, destination: Hex) -> ActionResult:
     cost = destination.terrain_difficulty
+    if faction.speed < cost:
+        return supply(faction, faction.current_hex) if faction.current_hex else train(faction)
     faction.speed -= cost
     faction.current_hex = destination
     faction.save()

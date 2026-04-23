@@ -1,6 +1,13 @@
 from django.db import models
 
 
+class AgeChoices(models.IntegerChoices):
+    MAGIC    = 1, 'Age of Magic'
+    ARTIFICE = 2, 'Age of Artifice'
+    DESPAIR  = 3, 'Age of Despair'
+    DYING    = 4, 'Age of Dying'
+
+
 class Map(models.Model):
     name = models.CharField(max_length=200)
     image = models.ImageField(upload_to='maps/')

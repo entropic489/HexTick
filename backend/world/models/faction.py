@@ -51,6 +51,7 @@ class Faction(models.Model):
     theology = models.IntegerField(default=90)
 
     notes = models.TextField(blank=True, default='')
+    knowledge = models.ManyToManyField('world.Knowledge', blank=True, related_name='factions')
 
     current_action = models.CharField(
         max_length=20, choices=Action.choices, null=True, blank=True
@@ -64,6 +65,8 @@ class Faction(models.Model):
 
     # Set by Black Death for its duration; overrides the computed property
     population_trend_override = models.IntegerField(null=True, blank=True)
+
+    is_dead = models.BooleanField(default=False)
 
     # Counts consecutive days where resources < population; Famine triggers at 3
     famine_streak = models.IntegerField(default=0)
