@@ -182,7 +182,7 @@ export function HexMap({ map, hexes, factions, selectedHexId, fogOfWar, onHexCli
             preserveAspectRatio="none"
           />
         )}
-        {hexes.map((hex) => (
+{hexes.map((hex) => (
           <HexCell
             key={hex.id}
             hex={hex}

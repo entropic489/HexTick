@@ -18,12 +18,16 @@ export function HexCell({ hex, factions, size, originX, originY, selected, fogOf
   const points = flatTopPoints(cx, cy, size - 1);
   const hidden = fogOfWar && !hex.player_visible;
   const unexplored = fogOfWar && !hex.player_explored;
+  const fogged = fogOfWar && !hex.player_visible && !hex.player_explored;
 
   return (
     <g className={styles.cell} onClick={() => !hidden && onClick(hex.id)}>
+      {fogged && (
+        <polygon points={flatTopPoints(cx, cy, size)} fill="#555" stroke="none" />
+      )}
       <polygon
         points={points}
-        fill={hidden ? '#1a1a2e' : selected ? 'rgba(255,255,255,0.5)' : 'transparent'}
+        fill={selected ? 'rgba(255,255,255,0.5)' : 'transparent'}
         stroke={selected ? '#fff' : '#555'}
         strokeWidth={selected ? 2 : 0.5}
         opacity={unexplored && !hidden ? 0.5 : 1}
