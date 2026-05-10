@@ -3,13 +3,19 @@
   min-width: 260px;
   max-width: 360px;
   height: 100%;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   background: #181825;
   color: #cdd6f4;
   border-left: 1px solid #313244;
-  padding: 1rem;
   box-sizing: border-box;
   flex-shrink: 0;
+}
+
+.scrollContent {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
 }
 
 .empty {
@@ -317,4 +323,108 @@ h3 {
 .destError {
   color: #f38ba8;
   font-size: 0.75rem;
+}
+
+.hexLabels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #313244;
+}
+
+.hexLabel {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: #313244;
+  color: #cdd6f4;
+  text-transform: capitalize;
+  letter-spacing: 0.03em;
+}
+
+.partyFooter {
+  background: #181825;
+  border-top: 1px solid #313244;
+  padding: 0.6rem 0.75rem 0.75rem;
+  margin-top: auto;
+}
+
+.partyFooterTitle {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #6c7086;
+  margin-bottom: 0.4rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.supplyBtn {
+  font-size: 0.68rem;
+  padding: 0.15rem 0.45rem;
+  background: #313244;
+  color: #cdd6f4;
+  border: 1px solid #45475a;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.supplyBtn:hover {
+  background: #45475a;
+}
+
+.supplyModal {
+  margin-top: 0.6rem;
+  padding: 0.6rem;
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  border-radius: 4px;
+}
+
+.supplyLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: #6c7086;
+}
+
+.supplyInput {
+  background: #313244;
+  color: #cdd6f4;
+  border: 1px solid #45475a;
+  border-radius: 3px;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.85rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.supplyActions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.partyStats {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.2rem 0.75rem;
+  margin: 0;
+  justify-content: end;
+  text-align: right;
+}
+
+.partyStats dt {
+  color: #6c7086;
+  font-size: 0.78rem;
+}
+
+.partyStats dd {
+  color: #cdd6f4;
+  font-size: 0.78rem;
+  margin: 0;
 }

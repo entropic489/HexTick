@@ -17,10 +17,15 @@ Including another URLconf
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.urls import path
-from world.api import api
+from world.api import api, tick_stream
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/maps/<int:map_id>/tick/stream/', tick_stream),
     path('api/', api.urls),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+if settings.DEBUG:
+    urlpatterns += staticfiles_urlpatterns()

@@ -15,6 +15,8 @@ class Action(models.TextChoices):
     DELVE  = 'delve',  'Delve'
     SEARCH  = 'search',  'Search'
     EXPLORE = 'explore', 'Explore'
+    SOCIAL  = 'social',  'Social'
+    REST    = 'rest',    'Rest'
 
 
 class DiseaseType(models.TextChoices):

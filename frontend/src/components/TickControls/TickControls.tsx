@@ -14,6 +14,7 @@ export function TickControls() {
       setPendingEvents(data.events);
       qc.invalidateQueries({ queryKey: ['hexes', mapId] });
       qc.invalidateQueries({ queryKey: ['factions', mapId] });
+      qc.setQueryData(['currentTick', mapId], { tick_number: data.tick_number });
     },
   });
 

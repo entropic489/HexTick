@@ -38,8 +38,8 @@ class TerrainType(str):
 
 
 _TERRAIN_TYPES = [
-    TerrainType('plains',   'Plains',   terrain_difficulty=1, resource_generation=2),
-    TerrainType('forest',   'Forest',   terrain_difficulty=2, resource_generation=1),
+    TerrainType('plains',   'Plains',   terrain_difficulty=1, resource_generation=1),
+    TerrainType('forest',   'Forest',   terrain_difficulty=2, resource_generation=2),
     TerrainType('mountain', 'Mountain', terrain_difficulty=4, resource_generation=0),
     TerrainType('swamp',    'Swamp',    terrain_difficulty=4, resource_generation=3),
     TerrainType('desert',   'Desert',   terrain_difficulty=2, resource_generation=0),
@@ -87,6 +87,8 @@ class Hex(models.Model):
     encounter_likelihood = models.IntegerField(default=0)
     player_explored = models.BooleanField(default=False)
     player_visible = models.BooleanField(default=False)
+    has_roads = models.BooleanField(default=False)
+    has_rivers = models.BooleanField(default=False)
 
     @property
     def terrain(self) -> TerrainType:

@@ -18,6 +18,7 @@ class Map(models.Model):
     # Pixel position of the hex at (row=0, col=0)
     origin_x = models.IntegerField(default=0)
     origin_y = models.IntegerField(default=0)
+    fog_of_war = models.BooleanField(default=True)
 
     def __str__(self):
         return self.name

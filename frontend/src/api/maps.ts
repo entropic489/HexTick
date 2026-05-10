@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { Map, Hex, Faction, Knowledge, TerrainType, WeatherType, ActionType } from '../types';
+import type { Map, Hex, Faction, Party, Knowledge, TerrainType, WeatherType, ActionType } from '../types';
 
 export interface PatchHexParams {
   terrain_type?: TerrainType;
@@ -144,6 +144,7 @@ export interface PatchCharacterParams {
   knowledge?: number[];
 }
 
+export const getParty = (mapId: number) => api.get<Party>(`/maps/${mapId}/party/`);
 export const getCharacters = (mapId: number) => api.get<import('../types').Character[]>(`/maps/${mapId}/characters/`);
 export const createCharacter = (mapId: number, params: CreateCharacterParams) =>
   api.post<import('../types').Character>(`/maps/${mapId}/characters/`, params);

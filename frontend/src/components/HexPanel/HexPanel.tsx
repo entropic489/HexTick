@@ -1,7 +1,8 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { Hex, Faction, TerrainType, WeatherType, ActionType } from '../../types';
+import type { Hex, Faction, Party, TerrainType, WeatherType, ActionType } from '../../types';
 import { patchHex, patchFaction } from '../../api/maps';
+import { patchParty } from '../../api/tick';
 import { AddPOIModal } from '../AddPOIModal/AddPOIModal';
 import { AddFactionModal } from '../AddFactionModal/AddFactionModal';
 import styles from './HexPanel.module.css';
@@ -25,6 +26,8 @@ interface EditState {
   encounter_likelihood: number;
   player_explored: boolean;
   player_visible: boolean;
+  has_roads: boolean;
+  has_rivers: boolean;
 }
 
 function hexToEditState(hex: Hex): EditState {
@@ -35,6 +38,8 @@ function hexToEditState(hex: Hex): EditState {
     encounter_likelihood: hex.encounter_likelihood,
     player_explored: hex.player_explored,
     player_visible: hex.player_visible,
+    has_roads: hex.has_roads,
+    has_rivers: hex.has_rivers,
   };
 }
 
@@ -45,11 +50,12 @@ interface Props {
   gmMode: boolean;
   prepMode?: boolean;
   mapId?: number;
+  party?: Party | null;
   onClose: () => void;
   children?: ReactNode;
 }
 
-export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, mapId, onClose, children }: Props) {
+export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, mapId, party, onClose, children }: Props) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditState | null>(null);
@@ -59,6 +65,29 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
   const [expandedFactionId, setExpandedFactionId] = useState<number | null>(null);
   const [editingFactionId, setEditingFactionId] = useState<number | null>(null);
   const [factionDraft, setFactionDraft] = useState<FactionEditState | null>(null);
+  const [partyEditing, setPartyEditing] = useState(false);
+  const [partyDraft, setPartyDraft] = useState<{
+    player_count: number;
+    supplies: number;
+    tracks_supplies: boolean;
+    speed: number;
+    max_speed: number;
+    resource_generation: number;
+    current_action: string;
+  } | null>(null);
+
+  const partyMutation = useMutation({
+    mutationFn: (draft: NonNullable<typeof partyDraft>) =>
+      patchParty(party!.id, {
+        ...draft,
+        current_action: draft.current_action || null,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['party'] });
+      setPartyEditing(false);
+      setPartyDraft(null);
+    },
+  });
 
   const factionMutation = useMutation({
     mutationFn: ({ id, params }: { id: number; params: FactionEditState }) => {
@@ -115,6 +144,7 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
 
   return (
     <aside className={styles.panel}>
+      <div className={styles.scrollContent}>
       {!hex ? (
         <p className={styles.empty}>Select a hex to view details.</p>
       ) : (
@@ -201,6 +231,24 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                   Player visible
                 </label>
 
+                <label className={styles.checkLabel}>
+                  <input
+                    type="checkbox"
+                    checked={draft.has_roads}
+                    onChange={(e) => set('has_roads', e.target.checked)}
+                  />
+                  Has roads
+                </label>
+
+                <label className={styles.checkLabel}>
+                  <input
+                    type="checkbox"
+                    checked={draft.has_rivers}
+                    onChange={(e) => set('has_rivers', e.target.checked)}
+                  />
+                  Has rivers
+                </label>
+
                 <div className={styles.editActions}>
                   <button
                     className={styles.saveBtn}
@@ -244,14 +292,16 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                 {gmMode && <><dt>Resources</dt><dd>{hex.resources}</dd></>}
                 {gmMode && <><dt>Encounter likelihood</dt><dd>{hex.encounter_likelihood}</dd></>}
                 <dt>Explored</dt><dd>{hex.player_explored ? 'Yes' : 'No'}</dd>
+                {gmMode && <><dt>Roads</dt><dd>{hex.has_roads ? 'Yes' : 'No'}</dd></>}
+                {gmMode && <><dt>Rivers</dt><dd>{hex.has_rivers ? 'Yes' : 'No'}</dd></>}
               </dl>
 
-              {hex.pois.filter((p) => gmMode || p.player_visible).length > 0 && (
+              {hex.pois.filter((p) => gmMode || !p.hidden).length > 0 && (
                 <section>
                   <h3>Points of Interest</h3>
                   <ul className={styles.poiList}>
                     {hex.pois
-                      .filter((p) => gmMode || p.player_visible)
+                      .filter((p) => gmMode || !p.hidden)
                       .map((poi) => {
                         const expanded = selectedPOIId === poi.id;
                         return (
@@ -287,7 +337,7 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                 </section>
               )}
 
-              {gmMode && factions.length > 0 && (
+              {factions.length > 0 && (
                 <section>
                   <h3>Factions present</h3>
                   <ul className={styles.factionList}>
@@ -312,7 +362,7 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                             {f.is_dying && <span className={styles.danger}>[dying]</span>}
                             <span className={styles.poiChevron}>{expanded ? '▲' : '▼'}</span>
                           </button>
-                          {expanded && !isEditing && (
+                          {expanded && !isEditing && gmMode && (
                             <div className={styles.poiDetail}>
                               <div className={styles.poiDetailRow}>
                                 <span>Population</span><span>{f.population}</span>
@@ -365,7 +415,7 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                               </button>
                             </div>
                           )}
-                          {expanded && isEditing && factionDraft && (
+                          {expanded && isEditing && factionDraft && gmMode && (
                             <div className={styles.poiDetail}>
                               <label className={styles.factionEditLabel}>
                                 <span>Next action</span>
@@ -446,10 +496,129 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                 </section>
               )}
 
+              {!gmMode && (hex.player_visible || hex.player_explored) && (
+                <div className={styles.hexLabels}>
+                  {(hex.player_visible || hex.player_explored) && (
+                    <span className={styles.hexLabel}>
+                      {hex.terrain_type.charAt(0).toUpperCase() + hex.terrain_type.slice(1)}
+                    </span>
+                  )}
+                  {hex.player_visible && (
+                    <span className={styles.hexLabel}>{hex.weather}</span>
+                  )}
+                  {hex.has_roads && (
+                    <span className={styles.hexLabel}>Roads</span>
+                  )}
+                  {hex.has_rivers && (
+                    <span className={styles.hexLabel}>Rivers</span>
+                  )}
+                </div>
+              )}
+
               {children}
             </>
           )}
         </>
+      )}
+      </div>
+      {party && (
+        <div className={styles.partyFooter}>
+          <div className={styles.partyFooterTitle}>
+            Party
+            {gmMode && !partyEditing && (
+              <button
+                className={styles.editBtn}
+                onClick={() => {
+                  setPartyDraft({
+                    player_count: party.player_count,
+                    supplies: party.supplies,
+                    tracks_supplies: party.tracks_supplies,
+                    speed: party.speed,
+                    max_speed: party.max_speed,
+                    resource_generation: party.resource_generation,
+                    current_action: party.current_action ?? '',
+                  });
+                  setPartyEditing(true);
+                }}
+              >
+                Edit
+              </button>
+            )}
+          </div>
+          {partyEditing && partyDraft ? (
+            <div className={styles.editForm}>
+              <label className={styles.fieldLabel}>
+                <span className={styles.fieldName}>Players</span>
+                <input className={styles.input} type="number" value={partyDraft.player_count}
+                  onChange={(e) => setPartyDraft((d) => d && { ...d, player_count: Number(e.target.value) })} />
+              </label>
+              <label className={styles.checkLabel}>
+                <input
+                  type="checkbox"
+                  checked={partyDraft.tracks_supplies}
+                  onChange={(e) => setPartyDraft((d) => d && { ...d, tracks_supplies: e.target.checked })}
+                />
+                Track supplies
+              </label>
+              {partyDraft.tracks_supplies && (
+                <label className={styles.fieldLabel}>
+                  <span className={styles.fieldName}>Supplies</span>
+                  <input className={styles.input} type="number" value={partyDraft.supplies}
+                    onChange={(e) => setPartyDraft((d) => d && { ...d, supplies: Number(e.target.value) })} />
+                </label>
+              )}
+              <label className={styles.fieldLabel}>
+                <span className={styles.fieldName}>Speed</span>
+                <input className={styles.input} type="number" value={partyDraft.speed}
+                  onChange={(e) => setPartyDraft((d) => d && { ...d, speed: Number(e.target.value) })} />
+              </label>
+              <label className={styles.fieldLabel}>
+                <span className={styles.fieldName}>Max speed</span>
+                <input className={styles.input} type="number" value={partyDraft.max_speed}
+                  onChange={(e) => setPartyDraft((d) => d && { ...d, max_speed: Number(e.target.value) })} />
+              </label>
+              <label className={styles.fieldLabel}>
+                <span className={styles.fieldName}>Resource gen</span>
+                <input className={styles.input} type="number" value={partyDraft.resource_generation}
+                  onChange={(e) => setPartyDraft((d) => d && { ...d, resource_generation: Number(e.target.value) })} />
+              </label>
+              <label className={styles.fieldLabel}>
+                <span className={styles.fieldName}>Action</span>
+                <select className={styles.select} value={partyDraft.current_action}
+                  onChange={(e) => setPartyDraft((d) => d && { ...d, current_action: e.target.value })}>
+                  <option value="">—</option>
+                  {ACTION_TYPES.map((a) => (
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
+              </label>
+              <div className={styles.editActions}>
+                <button
+                  className={styles.saveBtn}
+                  disabled={partyMutation.isPending}
+                  onClick={() => partyMutation.mutate(partyDraft)}
+                >
+                  {partyMutation.isPending ? 'Saving…' : 'Save'}
+                </button>
+                <button className={styles.cancelBtn} onClick={() => { setPartyEditing(false); setPartyDraft(null); }}>
+                  Cancel
+                </button>
+              </div>
+              {partyMutation.isError && <p className={styles.error}>Save failed.</p>}
+            </div>
+          ) : (
+            <dl className={styles.partyStats}>
+              <dt>Players</dt><dd>{party.player_count}</dd>
+              {party.tracks_supplies && <><dt>Supplies</dt><dd>{party.supplies}</dd></>}
+              <dt>Hex</dt><dd>{party.current_hex ?? '—'}</dd>
+              <dt>Destination</dt><dd>{party.destination ?? '—'}</dd>
+              <dt>Speed</dt><dd>{party.speed} / {party.max_speed}</dd>
+              <dt>Resource gen</dt><dd>{party.resource_generation}</dd>
+              <dt>Action</dt><dd>{party.current_action ?? '—'}</dd>
+              <dt>Last action</dt><dd>{party.last_action ?? '—'}</dd>
+            </dl>
+          )}
+        </div>
       )}
     </aside>
   );

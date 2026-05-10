@@ -1,5 +1,9 @@
+import json
 from typing import Optional
+import redis
+from django.conf import settings as django_settings
 from django.db.models import Q
+from django.http import StreamingHttpResponse
 from ninja import NinjaAPI, Schema, File, Form
 from ninja.files import UploadedFile
 from django.shortcuts import get_object_or_404
@@ -11,9 +15,40 @@ from world.models.characters import Character
 from world.models.party import Party
 from world.models.faction import Action
 from world.actions import tick_hex, tick_faction, tick_character
-from world.utils import hex_distance, modifier, adjacent_hexes
+from world.utils import hex_distance, modifier, adjacent_hexes, night_bonus, move_difficulty
 
 api = NinjaAPI(urls_namespace="api")
+
+_redis = redis.Redis.from_url(django_settings.REDIS_URL, decode_responses=True)
+
+
+def _sse_channel(map_id: int) -> str:
+    return f"tick:{map_id}"
+
+
+def broadcast_tick(map_id: int, tick_number: int) -> None:
+    _redis.publish(_sse_channel(map_id), json.dumps({"tick_number": tick_number}))
+
+
+def tick_stream(request, map_id: int):
+    def event_stream():
+        pubsub = _redis.pubsub()
+        pubsub.subscribe(_sse_channel(map_id))
+        try:
+            yield "retry: 3000\n\n"
+            for message in pubsub.listen():
+                if message["type"] == "message":
+                    yield f"data: {message['data']}\n\n"
+                else:
+                    yield ": keepalive\n\n"
+        finally:
+            pubsub.unsubscribe()
+            pubsub.close()
+
+    response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+    response["Cache-Control"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"
+    return response
 
 
 class MapSchema(Schema):
@@ -23,6 +58,7 @@ class MapSchema(Schema):
     hex_size: int
     origin_x: int
     origin_y: int
+    fog_of_war: bool
 
 
 @api.get("/maps/", response=list[MapSchema])
@@ -105,6 +141,8 @@ class HexSchema(Schema):
     encounter_likelihood: int
     player_explored: bool
     player_visible: bool
+    has_roads: bool
+    has_rivers: bool
     pois: list[POISchema]
 
     @staticmethod
@@ -119,6 +157,8 @@ class HexPatchSchema(Schema):
     encounter_likelihood: Optional[int] = None
     player_explored: Optional[bool] = None
     player_visible: Optional[bool] = None
+    has_roads: Optional[bool] = None
+    has_rivers: Optional[bool] = None
 
 
 @api.patch("/hexes/{hex_id}/", response=HexSchema)
@@ -566,6 +606,15 @@ def _run_shift(map_id: int) -> tuple[int, list[dict]]:
         factions_on_hex = factions_by_hex.get(character.current_hex_id, []) if character.current_hex_id else []
         tick_character(character, tick, factions_on_hex)
 
+    if tick.number % 3 == 0:
+        try:
+            party = Party.objects.get(map_id=map_id)
+            if party.tracks_supplies:
+                party.supplies = max(0, party.supplies - party.player_count)
+                party.save(update_fields=['supplies'])
+        except Party.DoesNotExist:
+            pass
+
     events = []
     for faction, ft in faction_ticks:
         if ft.action == 'battle':
@@ -604,18 +653,77 @@ def post_tick(request, body: TickRequestSchema):
         for _ in range(3):
             tick_number, events = _run_shift(body.map_id)
             all_events.extend(events)
+        transaction.on_commit(lambda: broadcast_tick(body.map_id, tick_number))
         return {'tick_number': tick_number, 'events': all_events}
 
     tick_number, events = _run_shift(body.map_id)
+    transaction.on_commit(lambda: broadcast_tick(body.map_id, tick_number))
     return {'tick_number': tick_number, 'events': events}
 
 
 # --- Party ---
 
+class PartySchema(Schema):
+    id: int
+    name: str
+    map: Optional[int]
+    faction: Optional[int]
+    characters: list[int]
+    player_count: int
+    speed: int
+    max_speed: int
+    resource_generation: int
+    supplies: int
+    tracks_supplies: bool
+    current_hex: Optional[int]
+    destination: Optional[int]
+    current_action: Optional[str]
+    last_action: Optional[str]
+
+    @staticmethod
+    def resolve_map(obj):
+        return obj.map_id
+
+    @staticmethod
+    def resolve_faction(obj):
+        return obj.faction_id
+
+    @staticmethod
+    def resolve_characters(obj):
+        return [c.id for c in obj.characters.all()]
+
+    @staticmethod
+    def resolve_current_hex(obj):
+        return obj.current_hex_id
+
+    @staticmethod
+    def resolve_destination(obj):
+        return obj.destination_id
+
+
+class CurrentTickSchema(Schema):
+    tick_number: int
+
+
+@api.get("/maps/{map_id}/tick/current/", response=CurrentTickSchema)
+def get_current_tick(request, map_id: int):
+    settings = WorldSettings.get()
+    return {"tick_number": settings.current_tick.number if settings.current_tick else 0}
+
+
+@api.get("/maps/{map_id}/party/", response=PartySchema)
+def get_party(request, map_id: int):
+    map_obj = get_object_or_404(Map, id=map_id)
+    party = get_object_or_404(Party, map=map_obj)
+    party.characters.all()  # prefetch
+    return party
+
+
 class PartyActionSchema(Schema):
     action: str  # "move" | "search" | "explore" | "supply"
     hex_id: Optional[int] = None   # required for move
     poi_id: Optional[int] = None   # required for explore
+    amount: Optional[int] = None   # used by supply
 
 
 class PartyActionResponseSchema(Schema):
@@ -652,19 +760,26 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         if not party.current_hex or destination.map_id != party.current_hex.map_id:
             return api.create_response(request, {'detail': 'Destination hex is not on the same map.'}, status=400)
 
+        current_tick_number = WorldSettings.get().current_tick.number if WorldSettings.get().current_tick else 0
+        move_cost = move_difficulty(party.current_hex, destination, current_tick_number)
+        if move_cost > party.speed:
+            return api.create_response(request, {'detail': 'You must rest before traveling here.'}, status=400)
+
         old_hex = party.current_hex
         map_id = old_hex.map_id
         party.last_action = party.current_action
         party.current_action = Action.TRAVEL
-        party.speed -= destination.terrain_difficulty
+        party.speed -= move_cost
         party.current_hex = destination
         party.save()
 
-        old_hex.player_visible = False
-        old_hex.save()
-        destination.player_visible = True
-        destination.player_explored = True
-        destination.save()
+        all_map_hexes = list(Hex.objects.filter(map_id=map_id))
+        new_adjacent_ids = {h.id for h in adjacent_hexes(destination, all_map_hexes)}
+
+        # Destination + its neighbours become visible; destination is now explored
+        Hex.objects.filter(id__in=(new_adjacent_ids | {destination.id})).update(player_visible=True)
+        Hex.objects.filter(id=destination.id).update(player_explored=True)
+        destination.refresh_from_db()
 
         if party.faction and party.faction.is_player_faction:
             party.faction.current_action = Action.TRAVEL
@@ -694,8 +809,33 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         party.save()
 
     elif body.action == 'supply':
+        if body.amount is not None:
+            party.supplies = max(0, party.supplies + body.amount)
         party.last_action = party.current_action
         party.current_action = Action.SUPPLY
+        party.save()
+
+    elif body.action == 'delve':
+        if not party.current_hex:
+            return api.create_response(request, {'detail': 'Party has no current hex.'}, status=400)
+        dungeon = party.current_hex.pois.filter(poi_type='dungeon', hidden=False).first()
+        if not dungeon:
+            return api.create_response(request, {'detail': 'No accessible dungeon on current hex.'}, status=400)
+        dungeon.player_explored = True
+        dungeon.save()
+        party.last_action = party.current_action
+        party.current_action = Action.DELVE
+        party.save()
+
+    elif body.action == 'social':
+        party.last_action = party.current_action
+        party.current_action = Action.SOCIAL
+        party.save()
+
+    elif body.action == 'rest':
+        party.speed = party.max_speed
+        party.last_action = party.current_action
+        party.current_action = Action.REST
         party.save()
 
     else:
@@ -711,6 +851,9 @@ def party_action(request, party_id: int, body: PartyActionSchema):
 
     party_tick = _create_party_tick(party, tick, party.current_action)
 
+    if map_id:
+        transaction.on_commit(lambda: broadcast_tick(map_id, tick_number))
+
     return {'tick_number': tick_number, 'events': events, 'party_tick_id': party_tick.id, **extra}
 
 
@@ -721,3 +864,57 @@ def update_party_tick_notes(request, party_id: int, party_tick_id: int, notes: s
     pt.notes = notes
     pt.save()
     return {'id': pt.id, 'notes': pt.notes}
+
+
+class PartySuppliesSchema(Schema):
+    supplies: int
+
+
+@api.patch("/party/{party_id}/supplies/", response=PartySchema)
+@transaction.atomic
+def patch_party_supplies(request, party_id: int, body: PartySuppliesSchema):
+    party = get_object_or_404(Party, id=party_id)
+    party.supplies = max(0, body.supplies)
+    party.save(update_fields=['supplies'])
+    return party
+
+
+class PartyPatchSchema(Schema):
+    player_count: Optional[int] = None
+    supplies: Optional[int] = None
+    tracks_supplies: Optional[bool] = None
+    speed: Optional[int] = None
+    max_speed: Optional[int] = None
+    resource_generation: Optional[int] = None
+    current_action: Optional[str] = None
+
+
+@api.patch("/party/{party_id}/", response=PartySchema)
+@transaction.atomic
+def patch_party(request, party_id: int, body: PartyPatchSchema):
+    party = get_object_or_404(Party, id=party_id)
+    fields = []
+    if body.player_count is not None:
+        party.player_count = body.player_count
+        fields.append('player_count')
+    if body.supplies is not None:
+        party.supplies = max(0, body.supplies)
+        fields.append('supplies')
+    if body.tracks_supplies is not None:
+        party.tracks_supplies = body.tracks_supplies
+        fields.append('tracks_supplies')
+    if body.speed is not None:
+        party.speed = body.speed
+        fields.append('speed')
+    if body.max_speed is not None:
+        party.max_speed = body.max_speed
+        fields.append('max_speed')
+    if body.resource_generation is not None:
+        party.resource_generation = body.resource_generation
+        fields.append('resource_generation')
+    if body.current_action is not None:
+        party.current_action = body.current_action or None
+        fields.append('current_action')
+    if fields:
+        party.save(update_fields=fields)
+    return party

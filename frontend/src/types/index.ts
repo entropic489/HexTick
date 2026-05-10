@@ -12,6 +12,7 @@ export interface Map {
   hex_size: number;
   origin_x: number;
   origin_y: number;
+  fog_of_war: boolean;
 }
 
 export interface PointOfInterest {
@@ -40,6 +41,8 @@ export interface Hex {
   encounter_likelihood: number;
   player_explored: boolean;
   player_visible: boolean;
+  has_roads: boolean;
+  has_rivers: boolean;
   pois: PointOfInterest[];
 }
 
@@ -112,9 +115,20 @@ export interface Character {
 
 export interface Party {
   id: number;
+  name: string;
+  map: number | null;
   faction: number | null;
+  characters: number[];
+  player_count: number;
+  speed: number;
+  max_speed: number;
+  resource_generation: number;
+  supplies: number;
+  tracks_supplies: boolean;
   current_hex: number | null;
   destination: number | null;
+  current_action: string | null;
+  last_action: string | null;
 }
 
 export interface TickRequest {
@@ -134,7 +148,7 @@ export interface TickResponse {
   events: TickEvent[];
 }
 
-export type PartyActionType = 'move' | 'search' | 'explore' | 'supply';
+export type PartyActionType = 'move' | 'search' | 'explore' | 'supply' | 'delve' | 'social' | 'rest';
 
 export interface PartyActionRequest {
   action: PartyActionType;

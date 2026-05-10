@@ -1,38 +1,35 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { getMap, getHexes, getFactions } from '../../api/maps';
-import { postPartyAction } from '../../api/tick';
+import { getMap, getHexes, getFactions, getParty } from '../../api/maps';
+import { getCurrentTick } from '../../api/tick';
 import { HexMap } from '../../components/HexMap/HexMap';
 import { HexPanel } from '../../components/HexPanel/HexPanel';
 import { EventLog } from '../../components/EventLog/EventLog';
+import { ActionModal } from '../../components/ActionModal/ActionModal';
+import { TimeOfDayBadge } from '../../components/TimeOfDayBadge/TimeOfDayBadge';
 import { useGameStore } from '../../store/useGameStore';
+import { useTickStream } from '../../hooks/useTickStream';
 import styles from './PlayerPage.module.css';
 
 export function PlayerPage() {
   const { mapId } = useParams<{ mapId: string }>();
   const id = Number(mapId);
-  const qc = useQueryClient();
 
   const selectedHexId = useGameStore((s) => s.selectedHexId);
   const setSelectedHexId = useGameStore((s) => s.setSelectedHexId);
-  const setPendingEvents = useGameStore((s) => s.setPendingEvents);
+
+  const [actionModalOpen, setActionModalOpen] = useState(false);
+
+  useTickStream(id);
 
   const { data: map } = useQuery({ queryKey: ['map', id], queryFn: () => getMap(id) });
   const { data: hexes = [] } = useQuery({ queryKey: ['hexes', id], queryFn: () => getHexes(id) });
   const { data: factions = [] } = useQuery({ queryKey: ['factions', id], queryFn: () => getFactions(id) });
+  const { data: party } = useQuery({ queryKey: ['party', id], queryFn: () => getParty(id) });
+  const { data: tickData } = useQuery({ queryKey: ['currentTick', id], queryFn: () => getCurrentTick(id) });
 
   const playerFaction = factions.find((f) => f.is_player_faction) ?? null;
-
-  const { mutate: move, isPending: isMoving } = useMutation({
-    mutationFn: (hexId: number) => postPartyAction(playerFaction!.id, { action: 'move', hex_id: hexId }),
-    onSuccess: (data) => {
-      setPendingEvents(data.events);
-      qc.invalidateQueries({ queryKey: ['hexes', id] });
-      qc.invalidateQueries({ queryKey: ['factions', id] });
-      setSelectedHexId(null);
-    },
-  });
-
   const selectedHex = hexes.find((h) => h.id === selectedHexId) ?? null;
 
   if (!map) return <div className={styles.status}>Loading…</div>;
@@ -41,6 +38,7 @@ export function PlayerPage() {
     <div className={styles.layout}>
       <header className={styles.header}>
         <span className={styles.title}>{map.name}</span>
+        {tickData && <TimeOfDayBadge tickNumber={tickData.tick_number} />}
         {playerFaction && (
           <span className={styles.speed}>
             Speed: {playerFaction.max_speed} | Hex: {playerFaction.current_hex ?? '—'}
@@ -55,29 +53,43 @@ export function PlayerPage() {
             hexes={hexes}
             factions={factions.filter((f) => f.is_player_faction)}
             selectedHexId={selectedHexId}
-            fogOfWar={true}
+            fogOfWar={map.fog_of_war}
+            partyHexId={party?.current_hex ?? null}
             onHexClick={setSelectedHexId}
           />
         </div>
         <HexPanel
           hex={selectedHex}
-          factions={[]}
+          factions={selectedHex ? factions.filter((f) => f.current_hex === selectedHex.id) : []}
           gmMode={false}
+          party={party}
           onClose={() => setSelectedHexId(null)}
         >
-          {selectedHex && playerFaction && selectedHex.player_visible && (
+          {selectedHex && party && (
             <button
               className={styles.moveBtn}
-              disabled={isMoving}
-              onClick={() => move(selectedHex.id)}
+              onClick={() => setActionModalOpen(true)}
             >
-              Move here (1 shift)
+              Actions…
             </button>
           )}
         </HexPanel>
       </div>
 
       <EventLog />
+
+      {actionModalOpen && selectedHex && party && (
+        <ActionModal
+          party={party}
+          selectedHex={selectedHex}
+          mapId={id}
+          onSuccess={() => {
+            setActionModalOpen(false);
+            setSelectedHexId(null);
+          }}
+          onClose={() => setActionModalOpen(false)}
+        />
+      )}
     </div>
   );
 }

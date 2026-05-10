@@ -22,12 +22,13 @@ interface Props {
   factions: Faction[];
   selectedHexId: number | null;
   fogOfWar: boolean;
+  partyHexId: number | null;
   onHexClick: (hexId: number) => void;
 }
 
 const MAX_SCALE = 8;
 
-export function HexMap({ map, hexes, factions, selectedHexId, fogOfWar, onHexClick }: Props) {
+export function HexMap({ map, hexes, factions, selectedHexId, fogOfWar, partyHexId, onHexClick }: Props) {
   const factionsByHex = useMemo(() => {
     const m = new Map<number, Faction[]>();
     for (const f of factions) {
@@ -305,6 +306,32 @@ export function HexMap({ map, hexes, factions, selectedHexId, fogOfWar, onHexCli
                 );
               })}
             </>
+          );
+        })()}
+
+        {/* Party crown */}
+        {(() => {
+          if (partyHexId == null) return null;
+          const hex = hexes.find((h) => h.id === partyHexId);
+          console.log('crown hex lookup', partyHexId, hex, hexes.length);
+          if (!hex) return null;
+          if (fogOfWar && !hex.player_explored) return null;
+          const [cx, cy] = hexToPixel(hex.row, hex.col, map.hex_size, map.origin_x, map.origin_y);
+          const s = map.hex_size * 0.35;
+          const path = `
+            M ${cx - s * 0.7} ${cy + s * 0.5}
+            L ${cx - s * 0.7} ${cy - s * 0.1}
+            L ${cx - s * 0.35} ${cy - s * 0.55}
+            L ${cx} ${cy - s * 0.15}
+            L ${cx + s * 0.35} ${cy - s * 0.55}
+            L ${cx + s * 0.7} ${cy - s * 0.1}
+            L ${cx + s * 0.7} ${cy + s * 0.5}
+            Z
+          `;
+          return (
+            <g style={{ pointerEvents: 'none' }}>
+              <path d={path} fill="#facc15" stroke="#92400e" strokeWidth={s * 0.12} strokeLinejoin="round" />
+            </g>
           );
         })()}
       </svg>

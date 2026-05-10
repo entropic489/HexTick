@@ -6,7 +6,7 @@ from .models.faction import Faction, Action, DiseaseType, ActiveDisease
 from .models.hex import Hex
 from .models.ticks import Tick, HexTick, FactionTick
 from .models.settings import WorldSettings
-from .utils import modifier, hex_distance
+from .utils import modifier, hex_distance, night_bonus, move_difficulty
 
 
 
@@ -24,6 +24,7 @@ def _select_action(
     faction: Faction,
     nearby_factions: list[Faction],
     candidate_hexes: list[Hex],
+    tick_number: int,
 ) -> ActionResult:
     hex = faction.current_hex
 
@@ -50,9 +51,9 @@ def _select_action(
                     key=lambda h: hex_distance(h, faction.destination),
                     default=step,
                 )
-                return travel(faction, detour)
+                return travel(faction, detour, tick_number)
             if step:
-                return travel(faction, step)
+                return travel(faction, step, tick_number)
 
     # Resolve nearest faction within scouting range
     in_range = [
@@ -73,7 +74,7 @@ def _select_action(
                     default=None,
                 )
                 if step:
-                    return travel(faction, step)
+                    return travel(faction, step, tick_number)
         if outmatched:
             best = max(
                 candidate_hexes,
@@ -82,7 +83,7 @@ def _select_action(
                 default=None,
             )
             if best:
-                return travel(faction, best)
+                return travel(faction, best, tick_number)
         elif faction.agreeableness < 0 and faction.combat_skill >= closest.combat_skill:
             return battle(faction, closest)
         elif closest.agreeableness >= 0 and faction.last_action != Action.TRADE:
@@ -100,7 +101,7 @@ def _select_action(
             default=None,
         )
         if best:
-            return travel(faction, best)
+            return travel(faction, best, tick_number)
 
     # Delve if there's a dungeon, resources cover next round, and theology check passes
     dungeon = hex.pois.filter(poi_type='dungeon', hidden=False).first()
@@ -122,7 +123,7 @@ def tick_faction(
     candidate_hexes: list[Hex],
 ) -> FactionTick:
     if not faction.is_player_faction and not faction.is_gm_faction:
-        result = _select_action(faction, nearby_factions, candidate_hexes)
+        result = _select_action(faction, nearby_factions, candidate_hexes, tick.number)
         faction.last_action = faction.current_action
         faction.current_action = result.action
         faction.next_action = None
@@ -187,10 +188,11 @@ def tick_faction(
 def _character_select_action(
     character: Character,
     factions_on_hex: list[Faction],
+    tick_number: int,
 ) -> tuple[str, str]:
     """Returns (action_label, notes)."""
     if character.destination:
-        return _character_travel(character)
+        return _character_travel(character, tick_number)
 
     if character.rations < character.ration_limit // 2:
         return _character_supply(character)
@@ -211,8 +213,8 @@ def _character_select_action(
     return 'idle', ''
 
 
-def _character_travel(character: Character) -> tuple[str, str]:
-    cost = character.destination.terrain_difficulty
+def _character_travel(character: Character, tick_number: int) -> tuple[str, str]:
+    cost = move_difficulty(character.current_hex, character.destination, tick_number)
     character.speed -= cost
     character.current_hex = character.destination
     if character.current_hex == character.destination:
@@ -258,7 +260,7 @@ def tick_character(
     notes = ''
 
     if not character.is_dead and character.is_wanderer:
-        action, notes = _character_select_action(character, factions_on_hex)
+        action, notes = _character_select_action(character, factions_on_hex, tick.number)
 
     if tick.number % 3 == 0:
         character.speed = character.max_speed
@@ -291,7 +293,7 @@ def tick_character(
 def tick_hex(hex: Hex, tick: Tick) -> HexTick:
     if tick.number % 3 == 0:
         hex.resources += hex.resource_generation * WorldSettings.get().hex_resource_tick_modifier
-        hex.save()
+        hex.save(update_fields=['resources'])
     return HexTick.objects.create(
         tick=tick,
         hex=hex,
@@ -311,7 +313,7 @@ def supply(faction: Faction, hex: Hex) -> ActionResult:
     faction.resources += amount
     hex.resources -= modifier(faction.resource_generation)
     faction.save()
-    hex.save()
+    hex.save(update_fields=['resources'])
     return ActionResult(action=Action.SUPPLY, notes=f"+{amount} resources")
 
 
@@ -437,8 +439,8 @@ def random_encounter(faction: Faction, hex: Hex) -> str:
         return f"found resources: +{gained}"
 
 
-def travel(faction: Faction, destination: Hex) -> ActionResult:
-    cost = destination.terrain_difficulty
+def travel(faction: Faction, destination: Hex, tick_number: int) -> ActionResult:
+    cost = move_difficulty(faction.current_hex, destination, tick_number)
     if faction.speed < cost:
         return supply(faction, faction.current_hex) if faction.current_hex else train(faction)
     faction.speed -= cost

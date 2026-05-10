@@ -4,12 +4,14 @@
 
 
 
-A Django + React application that runs autonomous factions on a hex map, with player exploration following Cairn 2e rules. Runs locally via Docker Compose (two services: backend and frontend).
+
+A Django + React application that runs autonomous factions on a hex map, with player exploration following Cairn 2e rules. Runs locally via Docker Compose (three services: backend, frontend, redis).
 
 ## Stack
 
 - **Backend**: Django 5.2 + Django Ninja (REST API), Python 3.13
 - **Database**: PostgreSQL (`psycopg2-binary`) in Docker; SQLite locally via `USE_SQLITE=true`
+- **Redis**: `redis:7-alpine` on port 6379. Used for SSE pub/sub cross-worker broadcast (`tick:{map_id}` channels). `REDIS_URL` env var consumed by `settings.py`; `_redis` client in `api.py` is module-level and shared across threads.
 - **Package manager**: PDM (`pyproject.toml` + `pdm.lock`). Deps exported to `requirements.txt` at build time via `pdm export`; pip installs into the system Python — no venv in the container.
 - **Frontend**: React 19 + TypeScript + Vite, CSS Modules, React Query + Zustand, React Router. Standalone SPA served on port 5173. Proxies `/api/*` to the Django backend.
 
@@ -67,6 +69,7 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 - `web` must be in Django's `ALLOWED_HOSTS`.
 - Vite dev server binds to `0.0.0.0` so it's reachable from the host.
 - Media files (`/media/`) are served by Django via `urls.py` using `static()` — only active when `DEBUG=True`. In production, serve via nginx or a storage backend.
+- Admin static files (`/static/admin/…`) require `staticfiles_urlpatterns()` in `urls.py` (under `if settings.DEBUG`) because the backend runs under **gunicorn**, which does not auto-serve static files the way `manage.py runserver` does. `STATIC_ROOT = BASE_DIR / 'staticfiles'`; `collectstatic` runs in `backend-entrypoint.sh`.
 - `map.image` is serialized by Django as the full `/media/maps/foo.png` path (not just the relative part). Use it directly as an `<img src>` or SVG `<image href>` — do not prepend `/media/` again.
 - Vite proxies both `/api` and `/media` to the backend (`vite.config.ts`).
 
@@ -81,6 +84,8 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 **`WorldSettings` is a singleton.** `save()` always forces `pk=1`. Always access via `WorldSettings.get()`. Holds `current_tick` FK — the single source of truth for the global tick number.
 
 **Tick sequence starts at 1.** `tick.number % 3 == 0` is a day; `tick.number % 21 == 0` is a week. Tick 0 never exists.
+
+**Time of day** cycles every 3 ticks: `% 3 == 0` → Morning, `% 3 == 1` → Afternoon, `% 3 == 2` → Night. Current day displayed as `floor(tick / 3)`. Night adds +2 to `terrain_difficulty` for all movement (factions, characters, party) via `night_bonus()` in `utils.py`. The frontend `TimeOfDayBadge` component reads from `GET /api/maps/{map_id}/tick/current/`.
 
 **DB queries stay out of the engine.** `tick_faction`, `tick_hex`, `tick_character` accept pre-fetched lists (`nearby_factions`, `candidate_hexes`, `factions_on_hex`). Don't add queries inside these functions.
 
@@ -109,6 +114,12 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 **`TerrainType` is not a `TextChoices` enum.** It's a custom `str` subclass with `terrain_difficulty` and `resource_generation` as instance attributes. Use `TerrainType.from_value(str)` to look up by DB value. `terrain_difficulty` and `resource_generation` on `Hex` are `@property` — do not add them as DB columns.
 
 **`modifier()`** — never inline `score // 10`. Always call `modifier()` from `world.utils`.
+
+**`move_difficulty(origin, destination, tick_number)`** in `utils.py` is the single source of truth for movement cost. It encapsulates both terrain and night penalty, and the road rule: if both hexes `has_roads`, base cost is 1 and night adds +1 (not +2). Never inline `destination.terrain_difficulty + night_bonus(...)` for movement — always call `move_difficulty`. `night_bonus()` still exists for non-movement uses.
+
+**`Hex.has_roads`** — BooleanField (default False). Road travel between two `has_roads` hexes always costs 1 base + 1 at night. Editable via GM hex edit panel.
+
+**`Hex.has_rivers`** — BooleanField (default False). No mechanical effect yet — purely informational. Editable via GM hex edit panel. Shown as a label pill in the player hex view.
 
 **Dungeon lookup filters `hidden=False`**: `hex.pois.filter(poi_type='dungeon', hidden=False).first()`.
 
@@ -150,6 +161,14 @@ BATTLE and TRADE each have a 1-tick cooldown via `last_action`.
 ## Party
 
 `Party` (`models/party.py`) is the player group. It selects its own hex to move to, which triggers a world tick. All fields are manually set — no auto-tick logic. If `faction` (OneToOneField) is set, that faction's `is_player_faction` should be `True`.
+
+**Key fields**: `player_count` (number of players, default 1), `supplies` (party resource pool, default 0), `resource_generation`, `speed`, `max_speed`.
+
+**Speed gating** — `POST /party/{id}/action/` with `action: 'move'` is rejected (400) if `destination.terrain_difficulty > party.speed`. The player must rest first. `action: 'rest'` resets `party.speed = party.max_speed` and counts as a full action (triggers `_run_shift`). Rest is always available.
+
+**Supply consumption** — every Morning tick (`tick.number % 3 == 0`), `_run_shift` deducts `party.player_count` from `party.supplies` (floor 0). Supply action accepts an optional `amount` int; if provided, it is added to `party.supplies` before the tick runs.
+
+**GM supply endpoint** — `PATCH /api/party/{id}/supplies/` with `{ supplies: int }` sets `party.supplies` directly (floor 0). Superseded by `PATCH /api/party/{id}/` for GM use — the broader endpoint is what `HexPanel` now calls. The supplies-only endpoint remains but is no longer wired to any UI.
 
 `PartyTick` snapshots `current_hex`, `destination`, `action`, `last_action`, and `notes` (GM freetext) each tick. Notes can be updated after the fact via `PATCH /api/party/{id}/ticks/{tick_id}/notes/`.
 
@@ -197,13 +216,21 @@ The `KnowledgePage` is a GM-only view (linked from the GMPage header). No player
 
 ---
 
+## Non-obvious admin behaviours
+
+**`HexAdmin` supports structured search** — `get_search_results` is overridden to parse `key=value` tokens. `map=name`, `row=3`, `col=4` apply as exact filters; anything else falls through to the normal `icontains` search. Mixed queries like `map=Ashenvale row=2 col=5` work.
+
+**`Map.fog_of_war`** — controls whether `PlayerPage` renders fog. `GMPage` is hardcoded to `fogOfWar={false}` and ignores this flag. Togglable via admin actions on the Map list.
+
+---
+
 ## What's not wired up yet
 
 **API**
 - `PATCH /api/factions/{id}/action/` not yet implemented as a dedicated endpoint — `next_action` is now editable via `PATCH /api/factions/{id}/` from the HexPanel faction detail
-- `GET /api/party/{id}/` not yet implemented — no endpoint to fetch party state
+- Party is fetched via `GET /api/maps/{map_id}/party/` (one party per map via `OneToOneField`). `PATCH /api/party/{id}/` exists and accepts `player_count`, `supplies`, `speed`, `max_speed`, `resource_generation`, `current_action` (all optional).
 - Reverse tick not implemented — returns 501 per spec; engine has no undo
-- No endpoint to edit or delete existing POIs
+- No API endpoint to edit or delete existing POIs — use Django admin for that
 
 **Backend**
 - `FactionTick` does not snapshot `last_action`, `next_action`, `notes`, `is_gm_faction`, or `is_player_faction`
@@ -211,8 +238,11 @@ The `KnowledgePage` is a GM-only view (linked from the GMPage header). No player
 
 **Frontend**
 - "Show on map" on the Factions page selects the faction's hex but does not pan/zoom to it. Programmatic pan requires exposing the ref-based transform in `HexMap` — deferred.
-- `PlayerPage` passes `playerFaction.id` as the party ID to `POST /api/party/{id}/action/` — should be `Party.id`. Needs a party fetch in the component.
-- Party action radial menu (Search, Move, Explore, Supply) not yet built
+- `PlayerPage` fetches the party via `['party', mapId]` and passes `party.id` to `POST /api/party/{id}/action/`.
+- `HexPanel` accepts an optional `party` prop — renders a pinned footer with party stats (speed, hex, destination, action, resource gen). `PlayerPage` passes factions filtered to `f.current_hex === selectedHex.id`; the faction detail expand and edit form are gated behind `gmMode`. In `gmMode` the footer has an Edit button that opens an inline edit form for `player_count`, `supplies`, `speed`, `max_speed`, `resource_generation`, and `current_action`; saved via `PATCH /party/{id}/`.
+- Player view renders a **hex labels bar** (pill badges) below the hex info when `player_visible || player_explored`. Labels: terrain type, weather (both shown if `player_visible || player_explored`), Roads (if `has_roads`), Rivers (if `has_rivers`).
+- POI player-mode visibility rule is `!hidden` (not `player_visible`) — any non-hidden POI renders for the player.
+- `ActionModal` is built and wired into `PlayerPage` — opens via "Actions…" button when a hex is selected. Offers Move, Supply, Delve, Search, Social. Each action is enabled/disabled based on context (current hex vs other hex, dungeon presence). `Social` action records the tick but has no game effect.
 - GM faction action-setting modal not yet built — `next_action`, `destination`, `notes`, and `agreeableness` are now editable from the HexPanel faction expand/edit, but a dedicated modal for full faction management is not built
 - `patchPartyTickNotes` wired in `api/tick.ts` but no UI to trigger it
 - HexMap scroll-to-zoom is broken — anchor drifts toward bottom-right when cursor is not at top-left. Root cause unknown after investigation; pan/zoom now uses native listeners + direct SVG style mutation (refs, no React state). Needs a fresh look.
