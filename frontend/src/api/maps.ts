@@ -13,6 +13,17 @@ export interface PatchHexParams {
 export const patchHex = (hexId: number, params: PatchHexParams) =>
   api.patch<Hex>(`/hexes/${hexId}/`, params);
 
+export interface BulkPatchHexParams {
+  terrain_type?: TerrainType;
+  has_roads?: boolean;
+  has_rivers?: boolean;
+  player_visible?: boolean;
+  player_explored?: boolean;
+}
+
+export const bulkPatchHexes = (ids: number[], params: BulkPatchHexParams) =>
+  api.post<{ updated: number }>('/hexes/bulk-patch/', { ids, ...params });
+
 export interface CreatePOIParams {
   poi_type: string;
   name?: string;

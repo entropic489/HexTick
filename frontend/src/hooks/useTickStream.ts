@@ -14,6 +14,7 @@ export function useTickStream(mapId: number) {
       qc.invalidateQueries({ queryKey: ['hexes', mapId] });
       qc.invalidateQueries({ queryKey: ['factions', mapId] });
       qc.invalidateQueries({ queryKey: ['currentTick', mapId] });
+      qc.invalidateQueries({ queryKey: ['party', mapId] });
     };
 
     return () => es.close();

@@ -10,6 +10,7 @@ const POI_TYPES: { value: POIType; label: string }[] = [
   { value: 'ruin',         label: 'Ruin' },
   { value: 'stash',        label: 'Stash' },
   { value: 'monster_base', label: 'Monster Base' },
+  { value: 'general',      label: 'General' },
 ];
 
 interface Props {
@@ -68,6 +69,7 @@ export function AddPOIModal({ hexId, mapId, onClose }: Props) {
   const hasDifficulty = t === 'dungeon' || t === 'ruin';
   const hasDungeonFields = t === 'dungeon';
   const hasMonsterType = t === 'monster_base';
+  const hasGeneralFields = t === 'general';
 
   return (
     <div className={styles.backdrop} onMouseDown={onClose}>
@@ -163,7 +165,7 @@ export function AddPOIModal({ hexId, mapId, onClose }: Props) {
             />
           </div>
 
-          {hasDungeonFields && (
+          {(hasDungeonFields || hasGeneralFields) && (
             <div className={styles.rowFull}>
               <span className={styles.label}>Description</span>
               <textarea
@@ -175,7 +177,7 @@ export function AddPOIModal({ hexId, mapId, onClose }: Props) {
             </div>
           )}
 
-          {hasDungeonFields && (
+          {(hasDungeonFields || hasGeneralFields) && (
             <div className={styles.rowFull}>
               <span className={styles.label}>Notes</span>
               <textarea

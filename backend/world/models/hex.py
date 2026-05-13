@@ -24,6 +24,7 @@ class TerrainType(str):
     DESERT   = None
     COAST    = None
     OCEAN    = None
+    CITY     = None
 
     @classmethod
     def choices(cls):
@@ -38,13 +39,14 @@ class TerrainType(str):
 
 
 _TERRAIN_TYPES = [
-    TerrainType('plains',   'Plains',   terrain_difficulty=1, resource_generation=1),
-    TerrainType('forest',   'Forest',   terrain_difficulty=2, resource_generation=2),
-    TerrainType('mountain', 'Mountain', terrain_difficulty=4, resource_generation=0),
-    TerrainType('swamp',    'Swamp',    terrain_difficulty=4, resource_generation=3),
-    TerrainType('desert',   'Desert',   terrain_difficulty=2, resource_generation=0),
+    TerrainType('plains',   'Plains',   terrain_difficulty=1,  resource_generation=1),
+    TerrainType('forest',   'Forest',   terrain_difficulty=2,  resource_generation=2),
+    TerrainType('mountain', 'Mountain', terrain_difficulty=4,  resource_generation=0),
+    TerrainType('swamp',    'Swamp',    terrain_difficulty=4,  resource_generation=3),
+    TerrainType('desert',   'Desert',   terrain_difficulty=2,  resource_generation=0),
     TerrainType('coast',    'Coast',    terrain_difficulty=1,  resource_generation=2),
     TerrainType('ocean',    'Ocean',    terrain_difficulty=10, resource_generation=0),
+    TerrainType('city',     'City',     terrain_difficulty=1,  resource_generation=0),
 ]
 
 TerrainType.PLAINS   = _TERRAIN_TYPES[0]
@@ -54,6 +56,7 @@ TerrainType.SWAMP    = _TERRAIN_TYPES[3]
 TerrainType.DESERT   = _TERRAIN_TYPES[4]
 TerrainType.COAST    = _TERRAIN_TYPES[5]
 TerrainType.OCEAN    = _TERRAIN_TYPES[6]
+TerrainType.CITY     = _TERRAIN_TYPES[7]
 
 
 class POIType(models.TextChoices):
@@ -62,6 +65,7 @@ class POIType(models.TextChoices):
     RUIN         = 'ruin',         'Ruin'
     STASH        = 'stash',        'Stash'
     MONSTER_BASE = 'monster_base', 'Monster Base'
+    GENERAL      = 'general',      'General'
 
 
 class WeatherType(models.TextChoices):
@@ -89,6 +93,11 @@ class Hex(models.Model):
     player_visible = models.BooleanField(default=False)
     has_roads = models.BooleanField(default=False)
     has_rivers = models.BooleanField(default=False)
+    can_enter = models.BooleanField(default=False)
+    linked_map = models.ForeignKey(
+        'world.Map', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='entry_hexes',
+    )
 
     @property
     def terrain(self) -> TerrainType:
@@ -101,6 +110,11 @@ class Hex(models.Model):
     @property
     def resource_generation(self) -> int:
         return self.terrain.resource_generation
+
+    def save(self, *args, **kwargs):
+        if self.can_enter and (self.terrain_type != 'city' or self.map.map_type != 'regional'):
+            self.can_enter = False
+        super().save(*args, **kwargs)
 
     class Meta:
         unique_together = [('map', 'row', 'col')]

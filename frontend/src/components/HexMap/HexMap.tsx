@@ -21,14 +21,16 @@ interface Props {
   hexes: Hex[];
   factions: Faction[];
   selectedHexId: number | null;
+  selectedHexIds?: Set<number>;
   fogOfWar: boolean;
   partyHexId: number | null;
+  focusHex?: Hex | null;
   onHexClick: (hexId: number) => void;
 }
 
 const MAX_SCALE = 8;
 
-export function HexMap({ map, hexes, factions, selectedHexId, fogOfWar, partyHexId, onHexClick }: Props) {
+export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fogOfWar, partyHexId, focusHex, onHexClick }: Props) {
   const factionsByHex = useMemo(() => {
     const m = new Map<number, Faction[]>();
     for (const f of factions) {
@@ -55,12 +57,25 @@ export function HexMap({ map, hexes, factions, selectedHexId, fogOfWar, partyHex
   const minScale = useRef(0.1);
   const drag = useRef<{ startX: number; startY: number; ox: number; oy: number } | null>(null);
   const fitted = useRef(false);
+  const focusApplied = useRef(false);
 
   function applyTransform() {
     const svg = svgRef.current;
     if (!svg) return;
     const { x, y, scale } = transform.current;
     svg.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  }
+
+  function zoomToHex(hex: Hex, cw: number, ch: number) {
+    const [px, py] = hexToPixel(hex.row, hex.col, map.hex_size, map.origin_x, map.origin_y);
+    const targetScale = Math.min(MAX_SCALE, minScale.current * 4);
+    transform.current = {
+      scale: targetScale,
+      x: cw / 2 - px * targetScale,
+      y: ch / 2 - py * targetScale,
+    };
+    applyTransform();
+    focusApplied.current = true;
   }
 
   function fitToContainer(cw: number, ch: number) {
@@ -72,6 +87,7 @@ export function HexMap({ map, hexes, factions, selectedHexId, fogOfWar, partyHex
       y: (ch - svgHeight * fitScale) / 2,
     };
     applyTransform();
+    if (focusHex && !focusApplied.current) zoomToHex(focusHex, cw, ch);
   }
 
   // Fit on mount / when SVG dimensions change / when image loads.
@@ -83,6 +99,15 @@ export function HexMap({ map, hexes, factions, selectedHexId, fogOfWar, partyHex
     fitToContainer(el.clientWidth, el.clientHeight);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [svgWidth, svgHeight, imgSize]);
+
+  // Zoom to focusHex once party data arrives (after container is already fitted).
+  useEffect(() => {
+    if (!focusHex || focusApplied.current || !fitted.current) return;
+    const el = containerRef.current;
+    if (!el || el.clientWidth === 0) return;
+    zoomToHex(focusHex, el.clientWidth, el.clientHeight);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusHex]);
 
   // ResizeObserver for first render when container has no size yet.
   useEffect(() => {
@@ -192,6 +217,7 @@ export function HexMap({ map, hexes, factions, selectedHexId, fogOfWar, partyHex
             originX={map.origin_x}
             originY={map.origin_y}
             selected={hex.id === selectedHexId}
+            multiSelected={selectedHexIds?.has(hex.id) ?? false}
             fogOfWar={fogOfWar}
             onClick={onHexClick}
           />

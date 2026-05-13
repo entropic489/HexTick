@@ -1,6 +1,6 @@
 # HexTick
 
-> **Note to self:** Keep this file lean. Only add things that can't be recovered by reading the code — design intent, hard constraints, non-obvious quirks, architectural decisions. Field lists, formulas, and mechanics all live in the code; don't duplicate them here.
+> **Note to self:** Keep this file lean. Only add things that can't be recovered by reading the code — design intent, hard constraints, non-obvious quirks, architectural decisions. Field lists, formulas, and mechanics all live in the code; don't duplicate them here. Only update this file if you genuinely need to remember something for your next session that isn't obvious from the code.
 
 
 
@@ -79,11 +79,13 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 
 **`actions.py` is the game engine.** It imports models freely. Models never import from `actions.py`.
 
-**Tick records are immutable.** `HexTick`, `FactionTick`, `CharacterTick`, `PartyTick` are history. Never update them after creation. All fields are `readonly_fields` in admin.
+**Tick records are immutable.** `HexTick`, `FactionTick`, `CharacterTick` are history. Never update them after creation. All fields are `readonly_fields` in admin. `PartyTick` is the exception: on city maps, sub-tick actions within the same shift reuse the same `(tick, party)` record via `update_or_create` — the record is updated in place until the shift tick fires.
 
-**`WorldSettings` is a singleton.** `save()` always forces `pk=1`. Always access via `WorldSettings.get()`. Holds `current_tick` FK — the single source of truth for the global tick number.
+**`WorldSettings` is a singleton.** `save()` always forces `pk=1`. Always access via `WorldSettings.get()`. Holds `trade_amount` and `hex_resource_tick_modifier` — no tick state.
 
-**Tick sequence starts at 1.** `tick.number % 3 == 0` is a day; `tick.number % 21 == 0` is a week. Tick 0 never exists.
+**Tick sequence is per-map.** `Map.current_tick` is the single source of truth for each map's tick number. `Tick` has a `map` FK; `unique_together = [('map', 'number')]`. `tick.number % 3 == 0` is a day; `tick.number % 21 == 0` is a week. Tick 0 never exists.
+
+**`Map.map_type`** is either `regional` (default) or `city`. On city maps, `Map.sub_tick` counts party actions within the current shift (0–2). Each non-movement party action increments `sub_tick`; when `sub_tick % 3 == 0` it resets to 0 and `_run_shift` fires (advancing the global tick). **Movement on city maps does not consume a sub_tick** — it costs speed (still speed-gated by `terrain_difficulty`) but never increments `sub_tick` and never fires `_run_shift`. On regional maps, every party action fires `_run_shift` immediately. Factions still tick once per shift regardless of map type. `PartyTick.sub_tick` records where in the shift the action fell (0 = shift tick, 1 or 2 = mid-shift).
 
 **Time of day** cycles every 3 ticks: `% 3 == 0` → Morning, `% 3 == 1` → Afternoon, `% 3 == 2` → Night. Current day displayed as `floor(tick / 3)`. Night adds +2 to `terrain_difficulty` for all movement (factions, characters, party) via `night_bonus()` in `utils.py`. The frontend `TimeOfDayBadge` component reads from `GET /api/maps/{map_id}/tick/current/`.
 
@@ -178,13 +180,17 @@ BATTLE and TRADE each have a 1-tick cooldown via `last_action`.
 
 The GM view has two modes toggled by the **Prep / Play** button in the top bar. The button label always shows the *next* state (click "Prep" to enter prep mode, click "Play" to leave it).
 
-**Prep mode** — `prepMode: boolean` in Zustand. When true, selecting a hex immediately opens it in edit mode. When false, the hex panel opens in view mode and an **Edit** button is available to switch.
+**Prep mode** — `prepMode: boolean` in Zustand. When true, selecting a hex immediately opens it in edit mode. When false, the hex panel opens in view mode and an **Edit** button is available to switch. Exiting prep mode also clears multi-select state.
+
+**Multi-select mode** — `multiSelectMode: boolean` in Zustand, only available in prep mode. Toggled via the **Multi** button in the GM header (shows count badge when hexes are selected). In this mode hex clicks call `toggleSelectedHex` instead of `setSelectedHexId`; selected hexes render with a gold highlight. The sidebar swaps to `BulkHexPanel`, which edits `terrain_type`, `has_roads`, `has_rivers`, `player_visible`, `player_explored` across all selected hexes via `POST /api/hexes/bulk-patch/`. Checkboxes are tri-state: indeterminate = no change, checked = set true, unchecked = set false. Saving or cancelling exits multi-select mode.
 
 **Edit mode** (inside `HexPanel`) — edits `terrain_type`, `weather`, `resources`, `encounter_likelihood`, `player_explored`, `player_visible` in-place. Saved via `PATCH /api/hexes/{hex_id}/`. On save, React Query invalidates `['hexes', mapId]`. Cancel reverts draft to the current server state.
 
 **Add POI** — the `+ Add POI` button in edit mode opens `AddPOIModal`. Fields shown are conditional on `poi_type` (difficulty and title on dungeon; difficulty on ruin; monster_type on monster_base; description/notes on dungeon only). Age and the three visibility flags are always shown. M2M fields (`items`, `knowledge`) and the `faction` FK (village) are not editable from this modal. POI is created via `POST /api/hexes/{hex_id}/pois/`.
 
 **POI detail expand** — in view mode, each POI row is a clickable button. Clicking toggles an inline detail panel showing difficulty, description, GM notes, and visible/explored flags. Click again to collapse.
+
+**Move party** — in view mode, a "Move party here" button appears (right-aligned, above the party footer) whenever the selected hex is not the party's current hex. It calls `PATCH /api/party/{id}/` with `{ current_hex: hex.id }` — no speed-gating, GM teleport only.
 
 **Add Faction** — the `+ Add Faction` button in edit mode opens `AddFactionModal`. Fields: name, color (hex color picker + text), speed, population, technology, resources, combat_skill, agreeableness, theology, location (current hex, defaults to the selected hex), and faction type flags (mobile, GM faction, player faction). Destination is not set at creation. Created via `POST /maps/{map_id}/factions/`.
 
@@ -228,7 +234,7 @@ The `KnowledgePage` is a GM-only view (linked from the GMPage header). No player
 
 **API**
 - `PATCH /api/factions/{id}/action/` not yet implemented as a dedicated endpoint — `next_action` is now editable via `PATCH /api/factions/{id}/` from the HexPanel faction detail
-- Party is fetched via `GET /api/maps/{map_id}/party/` (one party per map via `OneToOneField`). `PATCH /api/party/{id}/` exists and accepts `player_count`, `supplies`, `speed`, `max_speed`, `resource_generation`, `current_action` (all optional).
+- Party is fetched via `GET /api/maps/{map_id}/party/` (one party per map via `OneToOneField`). `PATCH /api/party/{id}/` exists and accepts `player_count`, `supplies`, `speed`, `max_speed`, `resource_generation`, `current_action`, `current_hex` (all optional). `current_hex` accepts a hex ID and teleports the party with no speed check.
 - Reverse tick not implemented — returns 501 per spec; engine has no undo
 - No API endpoint to edit or delete existing POIs — use Django admin for that
 

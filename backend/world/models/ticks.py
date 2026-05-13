@@ -5,11 +5,15 @@ from .faction import Faction, Action
 
 
 class Tick(models.Model):
-    number = models.PositiveIntegerField(unique=True)
+    map = models.ForeignKey('world.Map', on_delete=models.CASCADE, related_name='ticks')
+    number = models.PositiveIntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        unique_together = [('map', 'number')]
+
     def __str__(self):
-        return f"Tick {self.number}"
+        return f"Tick {self.number} ({self.map})"
 
 
 class HexTick(models.Model):
@@ -76,6 +80,7 @@ class PartyTick(models.Model):
     action = models.CharField(max_length=20, choices=Action.choices, null=True, blank=True)
     last_action = models.CharField(max_length=20, choices=Action.choices, null=True, blank=True)
     notes = models.TextField(blank=True, default='')
+    sub_tick = models.PositiveIntegerField(default=0)
 
     class Meta:
         unique_together = [('tick', 'party')]

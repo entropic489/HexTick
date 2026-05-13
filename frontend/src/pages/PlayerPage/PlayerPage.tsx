@@ -8,6 +8,7 @@ import { HexPanel } from '../../components/HexPanel/HexPanel';
 import { EventLog } from '../../components/EventLog/EventLog';
 import { ActionModal } from '../../components/ActionModal/ActionModal';
 import { TimeOfDayBadge } from '../../components/TimeOfDayBadge/TimeOfDayBadge';
+import { ShiftActionsIndicator } from '../../components/ShiftActionsIndicator/ShiftActionsIndicator';
 import { useGameStore } from '../../store/useGameStore';
 import { useTickStream } from '../../hooks/useTickStream';
 import styles from './PlayerPage.module.css';
@@ -39,6 +40,7 @@ export function PlayerPage() {
       <header className={styles.header}>
         <span className={styles.title}>{map.name}</span>
         {tickData && <TimeOfDayBadge tickNumber={tickData.tick_number} />}
+        <ShiftActionsIndicator map={map} />
         {playerFaction && (
           <span className={styles.speed}>
             Speed: {playerFaction.max_speed} | Hex: {playerFaction.current_hex ?? '—'}
@@ -55,6 +57,7 @@ export function PlayerPage() {
             selectedHexId={selectedHexId}
             fogOfWar={map.fog_of_war}
             partyHexId={party?.current_hex ?? null}
+            focusHex={party?.current_hex != null ? (hexes.find((h) => h.id === party.current_hex) ?? null) : null}
             onHexClick={setSelectedHexId}
           />
         </div>
@@ -62,6 +65,7 @@ export function PlayerPage() {
           hex={selectedHex}
           factions={selectedHex ? factions.filter((f) => f.current_hex === selectedHex.id) : []}
           gmMode={false}
+          map={map}
           party={party}
           onClose={() => setSelectedHexId(null)}
         >

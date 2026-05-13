@@ -4,10 +4,6 @@ from django.db import models
 class WorldSettings(models.Model):
     trade_amount = models.IntegerField(default=5)
     hex_resource_tick_modifier = models.IntegerField(default=5)
-    current_tick = models.ForeignKey(
-        'world.Tick', null=True, blank=True,
-        on_delete=models.SET_NULL, related_name='+',
-    )
 
     def save(self, *args, **kwargs):
         self.pk = 1

@@ -1,13 +1,14 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { Hex, Faction, Party, TerrainType, WeatherType, ActionType } from '../../types';
+import { useNavigate } from 'react-router-dom';
+import type { Hex, Faction, Party, Map, TerrainType, WeatherType, ActionType } from '../../types';
 import { patchHex, patchFaction } from '../../api/maps';
 import { patchParty } from '../../api/tick';
 import { AddPOIModal } from '../AddPOIModal/AddPOIModal';
 import { AddFactionModal } from '../AddFactionModal/AddFactionModal';
 import styles from './HexPanel.module.css';
 
-const TERRAIN_TYPES: TerrainType[] = ['plains', 'forest', 'mountain', 'swamp', 'desert', 'coast', 'ocean'];
+const TERRAIN_TYPES: TerrainType[] = ['plains', 'forest', 'mountain', 'swamp', 'desert', 'coast', 'ocean', 'city'];
 const WEATHER_TYPES: WeatherType[] = ['fair', 'unpleasant', 'inclement', 'extreme', 'catastrophic'];
 const ACTION_TYPES: ActionType[] = ['supply', 'travel', 'trade', 'merge', 'battle', 'train', 'craft', 'delve', 'search', 'explore'];
 
@@ -28,6 +29,8 @@ interface EditState {
   player_visible: boolean;
   has_roads: boolean;
   has_rivers: boolean;
+  can_enter: boolean;
+  linked_map_id: number | null;
 }
 
 function hexToEditState(hex: Hex): EditState {
@@ -40,6 +43,8 @@ function hexToEditState(hex: Hex): EditState {
     player_visible: hex.player_visible,
     has_roads: hex.has_roads,
     has_rivers: hex.has_rivers,
+    can_enter: hex.can_enter,
+    linked_map_id: hex.linked_map,
   };
 }
 
@@ -50,12 +55,14 @@ interface Props {
   gmMode: boolean;
   prepMode?: boolean;
   mapId?: number;
+  map?: { map_type: 'regional' | 'city'; id: number } | null;
   party?: Party | null;
   onClose: () => void;
   children?: ReactNode;
 }
 
-export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, mapId, party, onClose, children }: Props) {
+export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, mapId, map, party, onClose, children }: Props) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditState | null>(null);
@@ -75,6 +82,13 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
     resource_generation: number;
     current_action: string;
   } | null>(null);
+
+  const movePartyMutation = useMutation({
+    mutationFn: () => patchParty(party!.id, { current_hex: hex!.id }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['party'] });
+    },
+  });
 
   const partyMutation = useMutation({
     mutationFn: (draft: NonNullable<typeof partyDraft>) =>
@@ -248,6 +262,31 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                   />
                   Has rivers
                 </label>
+
+                {map?.map_type === 'regional' && draft.terrain_type === 'city' && (
+                  <>
+                    <label className={styles.checkLabel}>
+                      <input
+                        type="checkbox"
+                        checked={draft.can_enter}
+                        onChange={(e) => set('can_enter', e.target.checked)}
+                      />
+                      Can enter
+                    </label>
+                    {draft.can_enter && (
+                      <label className={styles.fieldLabel}>
+                        <span className={styles.fieldName}>Linked map ID</span>
+                        <input
+                          className={styles.input}
+                          type="number"
+                          min={1}
+                          value={draft.linked_map_id ?? ''}
+                          onChange={(e) => set('linked_map_id', e.target.value === '' ? null : Number(e.target.value))}
+                        />
+                      </label>
+                    )}
+                  </>
+                )}
 
                 <div className={styles.editActions}>
                   <button
@@ -515,12 +554,37 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                 </div>
               )}
 
+              {map?.map_type === 'regional' && hex.terrain_type === 'city' && hex.can_enter && hex.linked_map && (
+                <button
+                  className={styles.movePartyBtn}
+                  onClick={() => navigate(`/map/${hex.linked_map}/${gmMode ? 'gm' : 'player'}`)}
+                >
+                  Enter the city
+                </button>
+              )}
+
               {children}
             </>
           )}
         </>
       )}
       </div>
+      {gmMode && hex && party && hex.id !== party.current_hex && (
+        <div className={styles.movePartyRow}>
+          {movePartyMutation.isError && (
+            <span className={styles.error}>
+              {(movePartyMutation.error as { detail?: string })?.detail ?? 'Move failed.'}
+            </span>
+          )}
+          <button
+            className={styles.movePartyBtn}
+            disabled={movePartyMutation.isPending}
+            onClick={() => movePartyMutation.mutate()}
+          >
+            {movePartyMutation.isPending ? 'Moving…' : 'Move party here'}
+          </button>
+        </div>
+      )}
       {party && (
         <div className={styles.partyFooter}>
           <div className={styles.partyFooterTitle}>
@@ -613,7 +677,6 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
               <dt>Hex</dt><dd>{party.current_hex ?? '—'}</dd>
               <dt>Destination</dt><dd>{party.destination ?? '—'}</dd>
               <dt>Speed</dt><dd>{party.speed} / {party.max_speed}</dd>
-              <dt>Resource gen</dt><dd>{party.resource_generation}</dd>
               <dt>Action</dt><dd>{party.current_action ?? '—'}</dd>
               <dt>Last action</dt><dd>{party.last_action ?? '—'}</dd>
             </dl>

@@ -8,9 +8,8 @@ from ninja import NinjaAPI, Schema, File, Form
 from ninja.files import UploadedFile
 from django.shortcuts import get_object_or_404
 from django.db import transaction
-from world.models import Map, Hex, PointOfInterest, Faction, Tick, FactionTick, PartyTick
+from world.models import Map, MapType, Hex, PointOfInterest, Faction, Tick, FactionTick, PartyTick
 from world.models.characters import Knowledge
-from world.models.settings import WorldSettings
 from world.models.characters import Character
 from world.models.party import Party
 from world.models.faction import Action
@@ -59,6 +58,8 @@ class MapSchema(Schema):
     origin_x: int
     origin_y: int
     fog_of_war: bool
+    map_type: str
+    sub_tick: int
 
 
 @api.get("/maps/", response=list[MapSchema])
@@ -143,6 +144,13 @@ class HexSchema(Schema):
     player_visible: bool
     has_roads: bool
     has_rivers: bool
+    can_enter: bool
+    linked_map: Optional[int] = None
+
+    @staticmethod
+    def resolve_linked_map(obj):
+        return obj.linked_map_id
+
     pois: list[POISchema]
 
     @staticmethod
@@ -159,6 +167,8 @@ class HexPatchSchema(Schema):
     player_visible: Optional[bool] = None
     has_roads: Optional[bool] = None
     has_rivers: Optional[bool] = None
+    can_enter: Optional[bool] = None
+    linked_map_id: Optional[int] = None
 
 
 @api.patch("/hexes/{hex_id}/", response=HexSchema)
@@ -170,6 +180,29 @@ def patch_hex(request, hex_id: int, body: HexPatchSchema):
     hex_obj.save()
     hex_obj.pois.all()  # prefetch for resolver
     return hex_obj
+
+
+class BulkHexPatchBody(Schema):
+    ids: list[int]
+    terrain_type: Optional[str] = None
+    has_roads: Optional[bool] = None
+    has_rivers: Optional[bool] = None
+    player_visible: Optional[bool] = None
+    player_explored: Optional[bool] = None
+
+
+class BulkHexPatchResult(Schema):
+    updated: int
+
+
+@api.post("/hexes/bulk-patch/", response=BulkHexPatchResult)
+@transaction.atomic
+def bulk_patch_hexes(request, body: BulkHexPatchBody):
+    updates = body.dict(exclude_unset=True, exclude={"ids"})
+    if not updates or not body.ids:
+        return {"updated": 0}
+    count = Hex.objects.filter(id__in=body.ids).update(**updates)
+    return {"updated": count}
 
 
 class POICreateSchema(Schema):
@@ -571,11 +604,11 @@ class TickRequestSchema(Schema):
 
 
 def _run_shift(map_id: int) -> tuple[int, list[dict]]:
-    settings = WorldSettings.get()
-    latest = settings.current_tick.number if settings.current_tick else 0
-    tick = Tick.objects.create(number=latest + 1)
-    settings.current_tick = tick
-    settings.save()
+    map_obj = Map.objects.select_for_update().get(id=map_id)
+    latest = map_obj.current_tick.number if map_obj.current_tick else 0
+    tick = Tick.objects.create(map=map_obj, number=latest + 1)
+    map_obj.current_tick = tick
+    map_obj.save(update_fields=['current_tick'])
 
     hexes = list(Hex.objects.filter(map_id=map_id).prefetch_related('pois'))
     factions = list(Faction.objects.filter(current_hex__map_id=map_id, is_dead=False))
@@ -707,8 +740,8 @@ class CurrentTickSchema(Schema):
 
 @api.get("/maps/{map_id}/tick/current/", response=CurrentTickSchema)
 def get_current_tick(request, map_id: int):
-    settings = WorldSettings.get()
-    return {"tick_number": settings.current_tick.number if settings.current_tick else 0}
+    map_obj = get_object_or_404(Map, id=map_id)
+    return {"tick_number": map_obj.current_tick.number if map_obj.current_tick else 0}
 
 
 @api.get("/maps/{map_id}/party/", response=PartySchema)
@@ -735,15 +768,19 @@ class PartyActionResponseSchema(Schema):
     terrain_type: Optional[str] = None
 
 
-def _create_party_tick(party, tick, action) -> PartyTick:
-    return PartyTick.objects.create(
+def _create_party_tick(party, tick, action, sub_tick: int = 0) -> PartyTick:
+    pt, _ = PartyTick.objects.update_or_create(
         tick=tick,
         party=party,
-        current_hex=party.current_hex,
-        destination=party.destination,
-        action=action,
-        last_action=party.last_action,
+        defaults=dict(
+            current_hex=party.current_hex,
+            destination=party.destination,
+            action=action,
+            last_action=party.last_action,
+            sub_tick=sub_tick,
+        ),
     )
+    return pt
 
 
 @api.post("/party/{party_id}/action/", response=PartyActionResponseSchema)
@@ -760,7 +797,8 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         if not party.current_hex or destination.map_id != party.current_hex.map_id:
             return api.create_response(request, {'detail': 'Destination hex is not on the same map.'}, status=400)
 
-        current_tick_number = WorldSettings.get().current_tick.number if WorldSettings.get().current_tick else 0
+        map_current = Map.objects.get(id=map_id).current_tick if map_id else None
+        current_tick_number = map_current.number if map_current else 0
         move_cost = move_difficulty(party.current_hex, destination, current_tick_number)
         if move_cost > party.speed:
             return api.create_response(request, {'detail': 'You must rest before traveling here.'}, status=400)
@@ -841,15 +879,39 @@ def party_action(request, party_id: int, body: PartyActionSchema):
     else:
         return api.create_response(request, {'detail': f'Unknown action: {body.action}'}, status=400)
 
-    tick_number, events = _run_shift(map_id)
-    tick = WorldSettings.get().current_tick
+    map_obj = Map.objects.get(id=map_id) if map_id else None
+    is_city = map_obj and map_obj.map_type == MapType.CITY
 
-    if party.faction and party.faction.is_player_faction and body.action == 'move':
-        party.refresh_from_db()
-        party.current_hex = party.faction.current_hex
-        party.save()
+    if is_city and body.action != 'move':
+        map_obj.sub_tick += 1
+        is_shift = map_obj.sub_tick % 3 == 0
+        if is_shift:
+            map_obj.sub_tick = 0
+        map_obj.save(update_fields=['sub_tick'])
+        party_sub_tick = 0 if is_shift else map_obj.sub_tick
+    elif is_city:
+        # Movement on city maps costs speed but not a sub_tick — no shift fires
+        is_shift = False
+        party_sub_tick = map_obj.sub_tick
+    else:
+        is_shift = True
+        party_sub_tick = 0
 
-    party_tick = _create_party_tick(party, tick, party.current_action)
+    if is_shift:
+        tick_number, events = _run_shift(map_id)
+        map_obj.refresh_from_db(fields=['current_tick'])
+        tick = map_obj.current_tick
+
+        if party.faction and party.faction.is_player_faction and body.action == 'move':
+            party.refresh_from_db()
+            party.current_hex = party.faction.current_hex
+            party.save()
+    else:
+        tick_number = map_obj.current_tick.number if map_obj and map_obj.current_tick else 0
+        events = []
+
+    tick = map_obj.current_tick if map_obj else None
+    party_tick = _create_party_tick(party, tick, party.current_action, sub_tick=party_sub_tick)
 
     if map_id:
         transaction.on_commit(lambda: broadcast_tick(map_id, tick_number))
@@ -887,6 +949,7 @@ class PartyPatchSchema(Schema):
     max_speed: Optional[int] = None
     resource_generation: Optional[int] = None
     current_action: Optional[str] = None
+    current_hex: Optional[int] = None
 
 
 @api.patch("/party/{party_id}/", response=PartySchema)
@@ -915,6 +978,9 @@ def patch_party(request, party_id: int, body: PartyPatchSchema):
     if body.current_action is not None:
         party.current_action = body.current_action or None
         fields.append('current_action')
+    if body.current_hex is not None:
+        party.current_hex = get_object_or_404(Hex, id=body.current_hex)
+        fields.append('current_hex')
     if fields:
         party.save(update_fields=fields)
     return party

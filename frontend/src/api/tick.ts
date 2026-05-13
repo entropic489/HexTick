@@ -22,6 +22,7 @@ export interface PartyPatch {
   max_speed?: number;
   resource_generation?: number;
   current_action?: string | null;
+  current_hex?: number;
 }
 
 export const patchParty = (partyId: number, body: PartyPatch) =>

@@ -259,6 +259,29 @@ h3 {
 
 .cancelBtn:hover { border-color: #cdd6f4; color: #cdd6f4; }
 
+.movePartyRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-top: 1px solid #313244;
+}
+
+.movePartyBtn {
+  padding: 0.3rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border: 1px solid #f5c2e7;
+  background: none;
+  color: #f5c2e7;
+}
+
+.movePartyBtn:hover { border-color: #cba6f7; color: #cba6f7; }
+
+.movePartyBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .addPoiBtn {
   padding: 0.3rem 0.75rem;
   border-radius: 4px;

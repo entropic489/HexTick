@@ -1,4 +1,4 @@
-from .world import Map
+from .world import Map, MapType
 from .hex import Hex, TerrainType, WeatherType, PointOfInterest
 from .faction import Faction, Action, DiseaseType, ActiveDisease
 from .characters import Item, Knowledge, Character, CharacterTick

@@ -4,9 +4,11 @@ import { getMap, getHexes, getFactions, getParty } from '../../api/maps';
 import { getCurrentTick } from '../../api/tick';
 import { HexMap } from '../../components/HexMap/HexMap';
 import { HexPanel } from '../../components/HexPanel/HexPanel';
+import { BulkHexPanel } from '../../components/BulkHexPanel/BulkHexPanel';
 import { TickControls } from '../../components/TickControls/TickControls';
 import { EventLog } from '../../components/EventLog/EventLog';
 import { TimeOfDayBadge } from '../../components/TimeOfDayBadge/TimeOfDayBadge';
+import { ShiftActionsIndicator } from '../../components/ShiftActionsIndicator/ShiftActionsIndicator';
 import { useGameStore } from '../../store/useGameStore';
 import { useTickStream } from '../../hooks/useTickStream';
 import styles from './GMPage.module.css';
@@ -20,6 +22,10 @@ export function GMPage() {
   const setSelectedHexId = useGameStore((s) => s.setSelectedHexId);
   const prepMode = useGameStore((s) => s.prepMode);
   const setPrepMode = useGameStore((s) => s.setPrepMode);
+  const multiSelectMode = useGameStore((s) => s.multiSelectMode);
+  const setMultiSelectMode = useGameStore((s) => s.setMultiSelectMode);
+  const selectedHexIds = useGameStore((s) => s.selectedHexIds);
+  const toggleSelectedHex = useGameStore((s) => s.toggleSelectedHex);
   const navigate = useNavigate();
 
   // keep store in sync if user navigates directly via URL
@@ -45,12 +51,23 @@ export function GMPage() {
       <header className={styles.header}>
         <span className={styles.title}>{map.name} — GM</span>
         {tickData && <TimeOfDayBadge tickNumber={tickData.tick_number} />}
+        <ShiftActionsIndicator map={map} />
         <button
           className={`${styles.modeToggle} ${prepMode ? styles.modePrep : styles.modePlay}`}
           onClick={() => setPrepMode(!prepMode)}
         >
           {prepMode ? 'Play' : 'Prep'}
         </button>
+        {prepMode && (
+          <button
+            className={`${styles.modeToggle} ${multiSelectMode ? styles.modePrep : ''}`}
+            onClick={() => setMultiSelectMode(!multiSelectMode)}
+          >
+            {multiSelectMode && selectedHexIds.size > 0
+              ? `Multi (${selectedHexIds.size})`
+              : 'Multi'}
+          </button>
+        )}
         <button
           className={styles.addFactionBtn}
           onClick={() => navigate(`/map/${id}/factions`)}
@@ -83,23 +100,34 @@ export function GMPage() {
             map={map}
             hexes={hexes}
             factions={factions}
-            selectedHexId={selectedHexId}
+            selectedHexId={multiSelectMode ? null : selectedHexId}
+            selectedHexIds={multiSelectMode ? selectedHexIds : undefined}
             fogOfWar={false}
             partyHexId={partyHexId}
-            onHexClick={setSelectedHexId}
+            onHexClick={multiSelectMode ? toggleSelectedHex : setSelectedHexId}
           />
           <TickControls />
         </div>
-        <HexPanel
-          hex={selectedHex}
-          hexes={hexes}
-          factions={hexFactions}
-          gmMode={true}
-          prepMode={prepMode}
-          mapId={id}
-          party={party}
-          onClose={() => setSelectedHexId(null)}
-        />
+        {multiSelectMode ? (
+          <BulkHexPanel
+            hexIds={[...selectedHexIds]}
+            hexes={hexes}
+            mapId={id}
+            onDone={() => setMultiSelectMode(false)}
+          />
+        ) : (
+          <HexPanel
+            hex={selectedHex}
+            hexes={hexes}
+            factions={hexFactions}
+            gmMode={true}
+            prepMode={prepMode}
+            mapId={id}
+            map={map}
+            party={party}
+            onClose={() => setSelectedHexId(null)}
+          />
+        )}
       </div>
 
       <EventLog />

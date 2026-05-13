@@ -92,6 +92,7 @@ export function ActionModal({ party, selectedHex, mapId, onSuccess, onClose }: P
       return postPartyAction(party.id, body);
     },
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['map', mapId] });
       qc.invalidateQueries({ queryKey: ['hexes', mapId] });
       qc.invalidateQueries({ queryKey: ['factions', mapId] });
       qc.invalidateQueries({ queryKey: ['party', mapId] });

@@ -1,9 +1,9 @@
-export type TerrainType = 'plains' | 'forest' | 'mountain' | 'swamp' | 'desert' | 'coast';
+export type TerrainType = 'plains' | 'forest' | 'mountain' | 'swamp' | 'desert' | 'coast' | 'ocean' | 'city';
 export type WeatherType = 'fair' | 'unpleasant' | 'inclement' | 'extreme' | 'catastrophic';
 export type ActionType =
   | 'supply' | 'travel' | 'trade' | 'merge' | 'battle'
   | 'train' | 'craft' | 'delve' | 'search' | 'explore';
-export type POIType = 'dungeon' | 'village' | 'ruin' | 'stash' | 'monster_base';
+export type POIType = 'dungeon' | 'village' | 'ruin' | 'stash' | 'monster_base' | 'general';
 
 export interface Map {
   id: number;
@@ -13,6 +13,8 @@ export interface Map {
   origin_x: number;
   origin_y: number;
   fog_of_war: boolean;
+  map_type: 'regional' | 'city';
+  sub_tick: number;
 }
 
 export interface PointOfInterest {
@@ -43,6 +45,8 @@ export interface Hex {
   player_visible: boolean;
   has_roads: boolean;
   has_rivers: boolean;
+  can_enter: boolean;
+  linked_map: number | null;
   pois: PointOfInterest[];
 }
 

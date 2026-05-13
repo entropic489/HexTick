@@ -22,12 +22,6 @@ class WorldSettingsAdmin(admin.ModelAdmin):
         return False
 
 
-class HexInline(admin.TabularInline):
-    model = Hex
-    extra = 0
-    fields = ('row', 'col', 'terrain_type', 'resources', 'weather', 'encounter_likelihood', 'player_explored', 'player_visible')
-
-
 @admin.action(description='Enable fog of war')
 def enable_fog_of_war(modeladmin, request, queryset):
     queryset.update(fog_of_war=True)
@@ -38,9 +32,8 @@ def disable_fog_of_war(modeladmin, request, queryset):
 
 @admin.register(Map)
 class MapAdmin(admin.ModelAdmin):
-    list_display = ('name', 'hex_size', 'origin_x', 'origin_y', 'fog_of_war')
+    list_display = ('name', 'map_type', 'current_tick', 'fog_of_war')
     actions = [enable_fog_of_war, disable_fog_of_war]
-    inlines = [HexInline]
 
 
 @admin.action(description='Mark selected hexes as player explored + visible')
@@ -138,11 +131,43 @@ class FactionAdmin(admin.ModelAdmin):
     inlines = [ActiveDiseaseInline]
 
 
+class POIMapFilter(admin.SimpleListFilter):
+    title = 'map'
+    parameter_name = 'map'
+
+    def lookups(self, request, model_admin):
+        maps = Map.objects.order_by('name')
+        return [(m.pk, m.name) for m in maps]
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(hex__map_id=self.value())
+        return queryset
+
+
+@admin.action(description='Set player visible')
+def poi_set_player_visible(modeladmin, request, queryset):
+    queryset.update(player_visible=True)
+
+@admin.action(description='Clear player visible')
+def poi_clear_player_visible(modeladmin, request, queryset):
+    queryset.update(player_visible=False)
+
+@admin.action(description='Set hidden')
+def poi_set_hidden(modeladmin, request, queryset):
+    queryset.update(hidden=True)
+
+@admin.action(description='Clear hidden')
+def poi_clear_hidden(modeladmin, request, queryset):
+    queryset.update(hidden=False)
+
+
 @admin.register(PointOfInterest)
 class PointOfInterestAdmin(admin.ModelAdmin):
     list_display = ('__str__', 'hex', 'poi_type', 'hidden', 'player_visible', 'player_explored')
-    list_filter = ('poi_type', 'hidden', 'player_visible', 'player_explored', 'hex__map')
+    list_filter = (POIMapFilter, 'poi_type', 'hidden', 'player_visible', 'player_explored')
     search_fields = ('name', 'title', 'hex__map__name')
+    actions = [poi_set_player_visible, poi_clear_player_visible, poi_set_hidden, poi_clear_hidden]
     fieldsets = (
         (None, {
             'fields': ('hex', 'poi_type', 'name', 'title', 'age'),
