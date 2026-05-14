@@ -127,7 +127,7 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 
 **`HexTick` does not copy POIs** — they are accessed live via `hex.pois.all()`.
 
-**Restless halves `comfort()`** — implemented inside the property with a DB query. Be aware if calling in a hot loop.
+**Restless halves `comfort()`** — `comfort()` takes `has_restless: bool`. Callers in `actions.py` compute it via `any(d.disease_type == DiseaseType.RESTLESS for d in faction.diseases.all())` against the prefetched queryset.
 
 **Disease re-contraction uses `update_or_create`** — resets duration rather than stacking.
 
@@ -228,6 +228,28 @@ The `KnowledgePage` is a GM-only view (linked from the GMPage header). No player
 
 **`Map.fog_of_war`** — controls whether `PlayerPage` renders fog. `GMPage` is hardcoded to `fogOfWar={false}` and ignores this flag. Togglable via admin actions on the Map list.
 
+**`Map.player_actions_locked`** — BooleanField toggled via `PATCH /api/maps/{map_id}/locked/`. When true, the "Actions…" button on `PlayerPage` is disabled. The lock endpoint publishes to the SSE channel (`tick:{map_id}`) after saving so the player view updates immediately without a tick firing. `useTickStream` invalidates `['map', mapId]` on every SSE message for this reason.
+
+---
+
+## Gallery
+
+`GalleryImage` (`models/gallery.py`) belongs to a `Map` (FK, CASCADE). Fields: `name`, `image` (ImageField → `gallery/`), `is_published` (BooleanField).
+
+Only one image can be published at a time — `PATCH /gallery/{id}/publish/` auto-unpublishes any previously published image before setting the new one. Toggling a published image unpublishes it.
+
+Publishing/unpublishing broadcasts `type: "gallery_update"` on the SSE channel (`tick:{map_id}`). `useTickStream` parses the event type and invalidates only `['gallery', mapId]` — it does **not** trigger a full tick invalidation for gallery events.
+
+`PlayerPage` renders a fullscreen overlay (`z-index: 200`) when any gallery image has `is_published = true`. There is no close button on the player side — the GM controls visibility via Publish/Unpublish.
+
+The GM can unpublish from two places: the **Gallery page** header button (prominent, only visible when something is live) and the **GMPage** header button (same — appears only when an image is published).
+
+File upload uses the same multipart/form-data pattern as map image upload: `File[UploadedFile]` + `Form[str]` on the backend, `api.postForm(FormData)` on the frontend. Do not diverge from this pattern.
+
+Route: `/map/:mapId/gallery` → `GalleryPage`. Linked via "Gallery" button in the GMPage header.
+
+**Faction images** — `Faction` has an `image` FK to `GalleryImage` (nullable, `SET_NULL`). Assignable via `PATCH /api/factions/{id}/` with `{ "image": <gallery_image_id> }`, via the faction edit form in `HexPanel` (GM mode only — `<select>` populated from `['gallery', map.id]`), or via Django admin. When a player clicks **Interact** on a faction that has an image set, `PATCH /gallery/{id}/publish/` fires immediately (no modal) — the SSE broadcast triggers the fullscreen overlay on `PlayerPage`. Factions without an image open the standard flavour-text `InteractModal` instead.
+
 ---
 
 ## What's not wired up yet
@@ -245,7 +267,7 @@ The `KnowledgePage` is a GM-only view (linked from the GMPage header). No player
 **Frontend**
 - "Show on map" on the Factions page selects the faction's hex but does not pan/zoom to it. Programmatic pan requires exposing the ref-based transform in `HexMap` — deferred.
 - `PlayerPage` fetches the party via `['party', mapId]` and passes `party.id` to `POST /api/party/{id}/action/`.
-- `HexPanel` accepts an optional `party` prop — renders a pinned footer with party stats (speed, hex, destination, action, resource gen). `PlayerPage` passes factions filtered to `f.current_hex === selectedHex.id`; the faction detail expand and edit form are gated behind `gmMode`. In `gmMode` the footer has an Edit button that opens an inline edit form for `player_count`, `supplies`, `speed`, `max_speed`, `resource_generation`, and `current_action`; saved via `PATCH /party/{id}/`.
+- `HexPanel` accepts an optional `party` prop — renders a pinned footer with party stats (speed, hex, destination, action, resource gen). `PlayerPage` passes `factions` filtered to `selectedHex.id` (for the selected-hex view) and `partyHexFactions` filtered to `party.current_hex` (non-player factions only) — the latter renders the **Factions Present** footer with Interact buttons regardless of which hex is selected. The faction detail expand and edit form are gated behind `gmMode`. In `gmMode` the footer has an Edit button that opens an inline edit form for `player_count`, `supplies`, `speed`, `max_speed`, `resource_generation`, and `current_action`; saved via `PATCH /party/{id}/`.
 - Player view renders a **hex labels bar** (pill badges) below the hex info when `player_visible || player_explored`. Labels: terrain type, weather (both shown if `player_visible || player_explored`), Roads (if `has_roads`), Rivers (if `has_rivers`).
 - POI player-mode visibility rule is `!hidden` (not `player_visible`) — any non-hidden POI renders for the player.
 - `ActionModal` is built and wired into `PlayerPage` — opens via "Actions…" button when a hex is selected. Offers Move, Supply, Delve, Search, Social. Each action is enabled/disabled based on context (current hex vs other hex, dungeon presence). `Social` action records the tick but has no game effect.

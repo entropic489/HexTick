@@ -118,7 +118,7 @@ class FactionAdmin(admin.ModelAdmin):
     readonly_fields = ('last_action', 'famine_streak', 'population_trend_override')
     fieldsets = (
         (None, {
-            'fields': ('name', 'is_mobile', 'is_player_faction', 'current_hex', 'destination'),
+            'fields': ('name', 'is_mobile', 'is_player_faction', 'current_hex', 'destination', 'image'),
         }),
         ('Stats', {
             'fields': ('population', 'technology', 'technology_max', 'resources',

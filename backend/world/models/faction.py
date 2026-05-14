@@ -73,6 +73,11 @@ class Faction(models.Model):
     # Counts consecutive days where resources < population; Famine triggers at 3
     famine_streak = models.IntegerField(default=0)
 
+    image = models.ForeignKey(
+        'world.GalleryImage', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='factions',
+    )
+
     current_hex = models.ForeignKey(
         Hex, null=True, blank=True,
         on_delete=models.SET_NULL,
@@ -107,10 +112,10 @@ class Faction(models.Model):
     def max_speed(self) -> int:
         return modifier((self.population + self.resources + self.technology) // 3)
 
-    def comfort(self, hex_resources: int) -> int:
+    def comfort(self, hex_resources: int, has_restless: bool = False) -> int:
         rg_modifier = self.resource_generation // 10
         value = self.population - self.resources + (rg_modifier * hex_resources)
-        if self.diseases.filter(disease_type=DiseaseType.RESTLESS).exists():
+        if has_restless:
             value //= 2
         return value
 

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from .models.characters import Character, CharacterTick
 from .models.faction import Faction, Action, DiseaseType, ActiveDisease
 from .models.hex import Hex
+from .models.party import Party
 from .models.ticks import Tick, HexTick, FactionTick
 from .models.settings import WorldSettings
 from .utils import modifier, hex_distance, night_bonus, move_difficulty
@@ -27,6 +28,8 @@ def _select_action(
     tick_number: int,
 ) -> ActionResult:
     hex = faction.current_hex
+    candidate_hexes = list(candidate_hexes)
+    random.shuffle(candidate_hexes)
 
     # GM-set destination: steer around disagreeable factions on the current hex
     if faction.destination:
@@ -92,7 +95,8 @@ def _select_action(
             return battle(faction, closest)
 
     # Stay and supply if the hex is comfortable; travel if not
-    if faction.comfort(hex.resources) >= 0:
+    has_restless = any(d.disease_type == DiseaseType.RESTLESS for d in faction.diseases.all())
+    if faction.comfort(hex.resources, has_restless) >= 0:
         return supply(faction, hex)
     else:
         best = min(
@@ -136,7 +140,7 @@ def tick_faction(
         faction.speed = faction.max_speed
         if faction.resources > 0:
             consumption = modifier(faction.population)
-            if faction.diseases.filter(disease_type=DiseaseType.RAVENOUS).exists():
+            if any(d.disease_type == DiseaseType.RAVENOUS for d in faction.diseases.all()):
                 consumption = int(consumption * 1.5)
             faction.resources = max(0, faction.resources - consumption)
         if faction.resources == 0:
@@ -239,6 +243,18 @@ def _character_merge(character: Character, target: Faction) -> tuple[str, str]:
     return Action.MERGE, f"joined {target} (left {old_faction})"
 
 
+def reveal_hex_on_move(destination: Hex, all_map_hexes: list[Hex]) -> None:
+    from world.utils import adjacent_hexes
+    adjacent_ids = {h.id for h in adjacent_hexes(destination, all_map_hexes)}
+    Hex.objects.filter(id__in=(adjacent_ids | {destination.id})).update(player_visible=True)
+    Hex.objects.filter(id=destination.id).update(player_explored=True)
+    destination.refresh_from_db()
+
+
+def reveal_pois_on_search(hex: Hex) -> None:
+    hex.pois.filter(hidden=False).update(player_visible=True)
+
+
 def update_character_visibility(character: Character, all_hexes: list[Hex]) -> None:
     """Mark hexes visible based on character scouting. No-op if scouting == 0."""
     if not character.scouting or not character.current_hex:
@@ -286,6 +302,14 @@ def tick_character(
         action=action,
         notes=notes,
     )
+
+
+# --- Party ---
+
+def tick_party(party: Party, tick: Tick) -> None:
+    if tick.number % 3 == 0 and party.tracks_supplies:
+        party.supplies = max(0, party.supplies - party.player_count)
+        party.save(update_fields=['supplies'])
 
 
 # --- Hex ---

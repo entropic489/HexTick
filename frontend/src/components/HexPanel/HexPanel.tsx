@@ -1,9 +1,10 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import type { Hex, Faction, Party, Map, TerrainType, WeatherType, ActionType } from '../../types';
 import { patchHex, patchFaction } from '../../api/maps';
 import { patchParty } from '../../api/tick';
+import { getGallery, publishGalleryImage } from '../../api/gallery';
 import { AddPOIModal } from '../AddPOIModal/AddPOIModal';
 import { AddFactionModal } from '../AddFactionModal/AddFactionModal';
 import styles from './HexPanel.module.css';
@@ -12,12 +13,41 @@ const TERRAIN_TYPES: TerrainType[] = ['plains', 'forest', 'mountain', 'swamp', '
 const WEATHER_TYPES: WeatherType[] = ['fair', 'unpleasant', 'inclement', 'extreme', 'catastrophic'];
 const ACTION_TYPES: ActionType[] = ['supply', 'travel', 'trade', 'merge', 'battle', 'train', 'craft', 'delve', 'search', 'explore'];
 
+
+interface InteractModalProps {
+  faction: Faction;
+  onClose: () => void;
+}
+
+function InteractModal({ faction, onClose }: InteractModalProps) {
+  return (
+    <div className={styles.interactBackdrop} onClick={onClose}>
+      <div className={styles.interactModal} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.interactHeader}>
+          <span
+            className={styles.interactDot}
+            style={{ background: faction.color }}
+          />
+          <span className={styles.interactName}>{faction.name}</span>
+          <button className={styles.close} onClick={onClose}>✕</button>
+        </div>
+        <div className={styles.interactBody}>
+          <p className={styles.interactFlavour}>
+            You make contact with {faction.name}. How the encounter unfolds is up to the GM.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface FactionEditState {
   notes: string;
   destRow: string;
   destCol: string;
   next_action: ActionType | null;
   agreeableness: number;
+  image: number | null;
 }
 
 interface EditState {
@@ -52,6 +82,7 @@ interface Props {
   hex: Hex | null;
   hexes?: Hex[];
   factions: Faction[];
+  partyHexFactions?: Faction[];
   gmMode: boolean;
   prepMode?: boolean;
   mapId?: number;
@@ -61,7 +92,7 @@ interface Props {
   children?: ReactNode;
 }
 
-export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, mapId, map, party, onClose, children }: Props) {
+export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmMode, prepMode = false, mapId, map, party, onClose, children }: Props) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -72,6 +103,7 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
   const [expandedFactionId, setExpandedFactionId] = useState<number | null>(null);
   const [editingFactionId, setEditingFactionId] = useState<number | null>(null);
   const [factionDraft, setFactionDraft] = useState<FactionEditState | null>(null);
+  const [interactFaction, setInteractFaction] = useState<Faction | null>(null);
   const [partyEditing, setPartyEditing] = useState(false);
   const [partyDraft, setPartyDraft] = useState<{
     player_count: number;
@@ -103,6 +135,12 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
     },
   });
 
+  const { data: galleryImages = [] } = useQuery({
+    queryKey: ['gallery', map?.id],
+    queryFn: () => getGallery(map!.id),
+    enabled: gmMode && map != null,
+  });
+
   const factionMutation = useMutation({
     mutationFn: ({ id, params }: { id: number; params: FactionEditState }) => {
       const destHex = hexes.find(
@@ -111,13 +149,18 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
       const destination = params.destRow === '' && params.destCol === ''
         ? null
         : (destHex?.id ?? null);
-      return patchFaction(id, { notes: params.notes, next_action: params.next_action, destination, agreeableness: params.agreeableness });
+      return patchFaction(id, { notes: params.notes, next_action: params.next_action, destination, agreeableness: params.agreeableness, image: params.image });
     },
     onSuccess: (_, { id }) => {
       if (mapId != null) queryClient.invalidateQueries({ queryKey: ['factions', mapId] });
       setEditingFactionId(null);
       setExpandedFactionId(id);
     },
+  });
+
+  const publishFactionImageMutation = useMutation({
+    mutationFn: (imageId: number) => publishGalleryImage(imageId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['gallery', map?.id] }),
   });
 
   useEffect(() => {
@@ -446,7 +489,7 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   const destHex = hexes.find((h) => h.id === f.destination);
-                                  setFactionDraft({ notes: f.notes, destRow: destHex ? String(destHex.row) : '', destCol: destHex ? String(destHex.col) : '', next_action: f.next_action, agreeableness: f.agreeableness });
+                                  setFactionDraft({ notes: f.notes, destRow: destHex ? String(destHex.row) : '', destCol: destHex ? String(destHex.col) : '', next_action: f.next_action, agreeableness: f.agreeableness, image: f.image });
                                   setEditingFactionId(f.id);
                                 }}
                               >
@@ -500,6 +543,19 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
                                   value={factionDraft.agreeableness}
                                   onChange={(e) => setFactionDraft((d) => d && { ...d, agreeableness: Number(e.target.value) })}
                                 />
+                              </label>
+                              <label className={styles.factionEditLabel}>
+                                <span>Image</span>
+                                <select
+                                  className={styles.select}
+                                  value={factionDraft.image ?? ''}
+                                  onChange={(e) => setFactionDraft((d) => d && { ...d, image: e.target.value ? Number(e.target.value) : null })}
+                                >
+                                  <option value="">— none —</option>
+                                  {galleryImages.map((img) => (
+                                    <option key={img.id} value={img.id}>{img.name || `Image ${img.id}`}</option>
+                                  ))}
+                                </select>
                               </label>
                               <label className={styles.factionEditLabel}>
                                 <span>Notes</span>
@@ -585,6 +641,28 @@ export function HexPanel({ hex, hexes = [], factions, gmMode, prepMode = false, 
           </button>
         </div>
       )}
+      {!gmMode && party && partyHexFactions.length > 0 && (
+        <div className={styles.factionPresence}>
+          <div className={styles.factionPresenceTitle}>Factions Present</div>
+          {partyHexFactions.map((f) => (
+            <div key={f.id} className={styles.factionPresenceRow}>
+              <span className={styles.factionPresenceDot} style={{ background: f.color }} />
+              <span className={styles.factionPresenceName}>{f.name}</span>
+              <button
+                className={styles.interactBtn}
+                onClick={() => f.image != null ? publishFactionImageMutation.mutate(f.image) : setInteractFaction(f)}
+              >
+                Interact
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {interactFaction && (
+        <InteractModal faction={interactFaction} onClose={() => setInteractFaction(null)} />
+      )}
+
       {party && (
         <div className={styles.partyFooter}>
           <div className={styles.partyFooterTitle}>

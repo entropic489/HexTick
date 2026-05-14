@@ -10,7 +10,16 @@ export function useTickStream(mapId: number) {
     const url = BASE_URL.replace(/\/api$/, '') + `/api/maps/${mapId}/tick/stream/`;
     const es = new EventSource(url);
 
-    es.onmessage = () => {
+    es.onmessage = (e) => {
+      let type: string | undefined;
+      try { type = JSON.parse(e.data)?.type; } catch { /* tick events have no type */ }
+
+      if (type === 'gallery_update') {
+        qc.invalidateQueries({ queryKey: ['gallery', mapId] });
+        return;
+      }
+
+      qc.invalidateQueries({ queryKey: ['map', mapId] });
       qc.invalidateQueries({ queryKey: ['hexes', mapId] });
       qc.invalidateQueries({ queryKey: ['factions', mapId] });
       qc.invalidateQueries({ queryKey: ['currentTick', mapId] });

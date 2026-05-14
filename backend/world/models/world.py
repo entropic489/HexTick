@@ -28,6 +28,7 @@ class Map(models.Model):
     map_type = models.CharField(max_length=20, choices=MapType.choices, default=MapType.REGIONAL)
     # City maps only: counts party actions within the current shift (0–2). Resets to 0 on shift tick.
     sub_tick = models.PositiveIntegerField(default=0)
+    player_actions_locked = models.BooleanField(default=False)
     current_tick = models.ForeignKey(
         'world.Tick', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='+',

@@ -15,6 +15,7 @@ export interface Map {
   fog_of_war: boolean;
   map_type: 'regional' | 'city';
   sub_tick: number;
+  player_actions_locked: boolean;
 }
 
 export interface PointOfInterest {
@@ -76,6 +77,7 @@ export interface Faction {
   notes: string;
   knowledge: number[];
   leader: number | null;
+  image: number | null;
 }
 
 export interface KnowledgeRef {
@@ -158,6 +160,13 @@ export interface PartyActionRequest {
   action: PartyActionType;
   hex_id?: number;
   poi_id?: number;
+}
+
+export interface GalleryImage {
+  id: number;
+  name: string;
+  image: string;
+  is_published: boolean;
 }
 
 export interface PartyActionResponse {

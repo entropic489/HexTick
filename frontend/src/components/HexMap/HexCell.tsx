@@ -51,7 +51,7 @@ export function HexCell({ hex, factions, size, originX, originY, selected, multi
           className={styles.factionLabel}
           fill={f.color ?? '#ffffff'}
         >
-          {f.name.slice(0, 2).toUpperCase()}
+          {f.name.match(/[A-Z]/g)?.join('') || f.name.slice(0, 2).toUpperCase()}
         </text>
       ))}
     </g>

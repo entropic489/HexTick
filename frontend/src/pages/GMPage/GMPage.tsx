@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getMap, getHexes, getFactions, getParty } from '../../api/maps';
+import { getMap, getHexes, getFactions, getParty, patchMapLocked } from '../../api/maps';
+import { getGallery, publishGalleryImage } from '../../api/gallery';
 import { getCurrentTick } from '../../api/tick';
 import { HexMap } from '../../components/HexMap/HexMap';
 import { HexPanel } from '../../components/HexPanel/HexPanel';
@@ -27,6 +28,12 @@ export function GMPage() {
   const selectedHexIds = useGameStore((s) => s.selectedHexIds);
   const toggleSelectedHex = useGameStore((s) => s.toggleSelectedHex);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const lockMutation = useMutation({
+    mutationFn: (locked: boolean) => patchMapLocked(id, locked),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['map', id] }),
+  });
 
   // keep store in sync if user navigates directly via URL
   if (useGameStore.getState().selectedMapId !== id) setSelectedMapId(id);
@@ -38,6 +45,14 @@ export function GMPage() {
   const { data: factions = [] } = useQuery({ queryKey: ['factions', id], queryFn: () => getFactions(id) });
   const { data: party } = useQuery({ queryKey: ['party', id], queryFn: () => getParty(id) });
   const { data: tickData } = useQuery({ queryKey: ['currentTick', id], queryFn: () => getCurrentTick(id) });
+  const { data: gallery = [] } = useQuery({ queryKey: ['gallery', id], queryFn: () => getGallery(id) });
+
+  const publishedImage = gallery.find((img) => img.is_published) ?? null;
+
+  const unpublishMutation = useMutation({
+    mutationFn: () => publishGalleryImage(publishedImage!.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['gallery', id] }),
+  });
 
   const selectedHex = hexes.find((h) => h.id === selectedHexId) ?? null;
   const hexFactions = factions.filter((f) => f.current_hex === selectedHexId);
@@ -49,8 +64,27 @@ export function GMPage() {
   return (
     <div className={styles.layout}>
       <header className={styles.header}>
-        <span className={styles.title}>{map.name} — GM</span>
         {tickData && <TimeOfDayBadge tickNumber={tickData.tick_number} />}
+        <button
+          className={`${styles.lockBtn} ${map.player_actions_locked ? styles.locked : styles.unlocked}`}
+          onClick={() => lockMutation.mutate(!map.player_actions_locked)}
+          title={map.player_actions_locked ? 'Unlock player actions' : 'Lock player actions'}
+        >
+          {map.player_actions_locked ? (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="3" y="7" width="10" height="8" rx="1.5" fill="currentColor" opacity="0.9"/>
+              <path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+              <circle cx="8" cy="11" r="1.2" fill="#1e1e2e"/>
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="3" y="7" width="10" height="8" rx="1.5" fill="currentColor" opacity="0.6"/>
+              <path d="M5 7V5a3 3 0 0 1 6 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+              <circle cx="8" cy="11" r="1.2" fill="#1e1e2e"/>
+            </svg>
+          )}
+        </button>
+        <span className={styles.title}>{map.name} — GM</span>
         <ShiftActionsIndicator map={map} />
         <button
           className={`${styles.modeToggle} ${prepMode ? styles.modePrep : styles.modePlay}`}
@@ -68,6 +102,21 @@ export function GMPage() {
               : 'Multi'}
           </button>
         )}
+        {publishedImage && (
+          <button
+            className={styles.unpublishBtn}
+            onClick={() => unpublishMutation.mutate()}
+            disabled={unpublishMutation.isPending}
+          >
+            Unpublish
+          </button>
+        )}
+        <button
+          className={styles.addFactionBtn}
+          onClick={() => navigate(`/map/${id}/gallery`)}
+        >
+          Gallery
+        </button>
         <button
           className={styles.addFactionBtn}
           onClick={() => navigate(`/map/${id}/factions`)}

@@ -54,10 +54,41 @@
 .moveBtn:hover:not(:disabled) { background: #2a4f7f; }
 .moveBtn:disabled { opacity: 0.4; cursor: default; }
 
+.lockIndicator {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.lockRed { color: #f38ba8; }
+.lockGreen { color: #a6e3a1; }
+
 .status {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100vh;
   color: #6c7086;
+}
+
+.imageOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.overlayImage {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.7);
 }

@@ -5,7 +5,7 @@ import type { Hex } from '../../types';
 import type { TerrainType } from '../../types';
 import styles from './BulkHexPanel.module.css';
 
-const TERRAIN_OPTIONS: TerrainType[] = ['plains', 'forest', 'mountain', 'swamp', 'desert', 'coast'];
+const TERRAIN_OPTIONS: TerrainType[] = ['plains', 'forest', 'mountain', 'swamp', 'desert', 'coast', 'ocean', 'city'];
 
 // tri-state: undefined = mixed/no-change, true/false = apply value
 type TriBool = boolean | undefined;

@@ -8,12 +8,12 @@ from ninja import NinjaAPI, Schema, File, Form
 from ninja.files import UploadedFile
 from django.shortcuts import get_object_or_404
 from django.db import transaction
-from world.models import Map, MapType, Hex, PointOfInterest, Faction, Tick, FactionTick, PartyTick
+from world.models import Map, MapType, Hex, PointOfInterest, Faction, Tick, FactionTick, PartyTick, GalleryImage
 from world.models.characters import Knowledge
 from world.models.characters import Character
 from world.models.party import Party
 from world.models.faction import Action
-from world.actions import tick_hex, tick_faction, tick_character
+from world.actions import tick_hex, tick_faction, tick_character, tick_party, reveal_hex_on_move, reveal_pois_on_search
 from world.utils import hex_distance, modifier, adjacent_hexes, night_bonus, move_difficulty
 
 api = NinjaAPI(urls_namespace="api")
@@ -60,6 +60,11 @@ class MapSchema(Schema):
     fog_of_war: bool
     map_type: str
     sub_tick: int
+    player_actions_locked: bool
+
+
+class MapLockSchema(Schema):
+    locked: bool
 
 
 @api.get("/maps/", response=list[MapSchema])
@@ -70,6 +75,15 @@ def list_maps(request):
 @api.get("/maps/{map_id}/", response=MapSchema)
 def get_map(request, map_id: int):
     return get_object_or_404(Map, id=map_id)
+
+
+@api.patch("/maps/{map_id}/locked/", response=MapSchema)
+def set_map_locked(request, map_id: int, body: MapLockSchema):
+    map_obj = get_object_or_404(Map, id=map_id)
+    map_obj.player_actions_locked = body.locked
+    map_obj.save(update_fields=['player_actions_locked'])
+    _redis.publish(_sse_channel(map_id), json.dumps({"type": "map_update"}))
+    return map_obj
 
 
 @api.post("/maps/", response=MapSchema)
@@ -171,17 +185,6 @@ class HexPatchSchema(Schema):
     linked_map_id: Optional[int] = None
 
 
-@api.patch("/hexes/{hex_id}/", response=HexSchema)
-@transaction.atomic
-def patch_hex(request, hex_id: int, body: HexPatchSchema):
-    hex_obj = get_object_or_404(Hex, id=hex_id)
-    for field, value in body.dict(exclude_unset=True).items():
-        setattr(hex_obj, field, value)
-    hex_obj.save()
-    hex_obj.pois.all()  # prefetch for resolver
-    return hex_obj
-
-
 class BulkHexPatchBody(Schema):
     ids: list[int]
     terrain_type: Optional[str] = None
@@ -203,6 +206,17 @@ def bulk_patch_hexes(request, body: BulkHexPatchBody):
         return {"updated": 0}
     count = Hex.objects.filter(id__in=body.ids).update(**updates)
     return {"updated": count}
+
+
+@api.patch("/hexes/{hex_id}/", response=HexSchema)
+@transaction.atomic
+def patch_hex(request, hex_id: int, body: HexPatchSchema):
+    hex_obj = get_object_or_404(Hex, id=hex_id)
+    for field, value in body.dict(exclude_unset=True).items():
+        setattr(hex_obj, field, value)
+    hex_obj.save()
+    hex_obj.pois.all()  # prefetch for resolver
+    return hex_obj
 
 
 class POICreateSchema(Schema):
@@ -263,6 +277,7 @@ class FactionSchema(Schema):
     notes: str = ''
     knowledge: list[int] = []
     leader: Optional[int] = None
+    image: Optional[int] = None
 
     @staticmethod
     def resolve_current_hex(obj):
@@ -279,6 +294,10 @@ class FactionSchema(Schema):
     @staticmethod
     def resolve_leader(obj):
         return obj.leader_id
+
+    @staticmethod
+    def resolve_image(obj):
+        return obj.image_id
 
 
 class FactionCreateSchema(Schema):
@@ -324,11 +343,13 @@ class FactionPatchSchema(Schema):
     notes: Optional[str] = None
     knowledge: Optional[list[int]] = None
     leader: Optional[int] = None
+    image: Optional[int] = None
 
 
 @api.patch("/factions/{faction_id}/", response=FactionSchema)
 @transaction.atomic
 def patch_faction(request, faction_id: int, body: FactionPatchSchema):
+    from world.models.gallery import GalleryImage
     faction = get_object_or_404(Faction, id=faction_id)
     data = body.dict(exclude_unset=True)
     if 'current_hex' in data:
@@ -340,6 +361,9 @@ def patch_faction(request, faction_id: int, body: FactionPatchSchema):
     if 'leader' in data:
         leader_id = data.pop('leader')
         faction.leader = get_object_or_404(Character, id=leader_id) if leader_id is not None else None
+    if 'image' in data:
+        image_id = data.pop('image')
+        faction.image = get_object_or_404(GalleryImage, id=image_id) if image_id is not None else None
     knowledge_ids = data.pop('knowledge', None)
     for field, value in data.items():
         setattr(faction, field, value)
@@ -611,7 +635,7 @@ def _run_shift(map_id: int) -> tuple[int, list[dict]]:
     map_obj.save(update_fields=['current_tick'])
 
     hexes = list(Hex.objects.filter(map_id=map_id).prefetch_related('pois'))
-    factions = list(Faction.objects.filter(current_hex__map_id=map_id, is_dead=False))
+    factions = list(Faction.objects.filter(current_hex__map_id=map_id, is_dead=False).prefetch_related('diseases'))
 
     for hex in hexes:
         tick_hex(hex, tick)
@@ -639,14 +663,11 @@ def _run_shift(map_id: int) -> tuple[int, list[dict]]:
         factions_on_hex = factions_by_hex.get(character.current_hex_id, []) if character.current_hex_id else []
         tick_character(character, tick, factions_on_hex)
 
-    if tick.number % 3 == 0:
-        try:
-            party = Party.objects.get(map_id=map_id)
-            if party.tracks_supplies:
-                party.supplies = max(0, party.supplies - party.player_count)
-                party.save(update_fields=['supplies'])
-        except Party.DoesNotExist:
-            pass
+    try:
+        party = Party.objects.get(map_id=map_id)
+        tick_party(party, tick)
+    except Party.DoesNotExist:
+        pass
 
     events = []
     for faction, ft in faction_ticks:
@@ -812,12 +833,7 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         party.save()
 
         all_map_hexes = list(Hex.objects.filter(map_id=map_id))
-        new_adjacent_ids = {h.id for h in adjacent_hexes(destination, all_map_hexes)}
-
-        # Destination + its neighbours become visible; destination is now explored
-        Hex.objects.filter(id__in=(new_adjacent_ids | {destination.id})).update(player_visible=True)
-        Hex.objects.filter(id=destination.id).update(player_explored=True)
-        destination.refresh_from_db()
+        reveal_hex_on_move(destination, all_map_hexes)
 
         if party.faction and party.faction.is_player_faction:
             party.faction.current_action = Action.TRAVEL
@@ -831,7 +847,7 @@ def party_action(request, party_id: int, body: PartyActionSchema):
 
     elif body.action == 'search':
         if party.current_hex:
-            party.current_hex.pois.filter(hidden=False).update(player_visible=True)
+            reveal_pois_on_search(party.current_hex)
         party.last_action = party.current_action
         party.current_action = Action.SEARCH
         party.save()
@@ -913,7 +929,9 @@ def party_action(request, party_id: int, body: PartyActionSchema):
     tick = map_obj.current_tick if map_obj else None
     party_tick = _create_party_tick(party, tick, party.current_action, sub_tick=party_sub_tick)
 
-    if map_id:
+    if map_id and map_obj:
+        map_obj.player_actions_locked = True
+        map_obj.save(update_fields=['player_actions_locked'])
         transaction.on_commit(lambda: broadcast_tick(map_id, tick_number))
 
     return {'tick_number': tick_number, 'events': events, 'party_tick_id': party_tick.id, **extra}
@@ -984,3 +1002,59 @@ def patch_party(request, party_id: int, body: PartyPatchSchema):
     if fields:
         party.save(update_fields=fields)
     return party
+
+
+# --- Gallery ---
+
+class GalleryImageSchema(Schema):
+    id: int
+    name: str
+    image: str
+    is_published: bool
+
+    @staticmethod
+    def resolve_image(obj):
+        return obj.image.url if obj.image else ''
+
+
+@api.get("/maps/{map_id}/gallery/", response=list[GalleryImageSchema])
+def list_gallery(request, map_id: int):
+    get_object_or_404(Map, id=map_id)
+    return list(GalleryImage.objects.filter(map_id=map_id))
+
+
+@api.post("/maps/{map_id}/gallery/", response=GalleryImageSchema)
+def upload_gallery_image(
+    request,
+    map_id: int,
+    image: File[UploadedFile],
+    name: Form[str] = '',
+):
+    map_obj = get_object_or_404(Map, id=map_id)
+    img = GalleryImage(map=map_obj, name=name)
+    img.image = image
+    img.save()
+    return img
+
+
+@api.delete("/gallery/{image_id}/")
+def delete_gallery_image(request, image_id: int):
+    img = get_object_or_404(GalleryImage, id=image_id)
+    img.image.delete(save=False)
+    img.delete()
+    return {'ok': True}
+
+
+@api.patch("/gallery/{image_id}/publish/", response=GalleryImageSchema)
+@transaction.atomic
+def publish_gallery_image(request, image_id: int):
+    img = get_object_or_404(GalleryImage, id=image_id)
+    if img.is_published:
+        img.is_published = False
+        img.save(update_fields=['is_published'])
+    else:
+        GalleryImage.objects.filter(map=img.map, is_published=True).update(is_published=False)
+        img.is_published = True
+        img.save(update_fields=['is_published'])
+    _redis.publish(_sse_channel(img.map_id), json.dumps({"type": "gallery_update"}))
+    return img

@@ -79,10 +79,14 @@ export interface PatchFactionParams {
   notes?: string;
   knowledge?: number[];
   leader?: number | null;
+  image?: number | null;
 }
 
 export const patchFaction = (factionId: number, params: PatchFactionParams) =>
   api.patch<import('../types').Faction>(`/factions/${factionId}/`, params);
+
+export const patchMapLocked = (mapId: number, locked: boolean) =>
+  api.patch<Map>(`/maps/${mapId}/locked/`, { locked });
 
 export const getMaps = () => api.get<Map[]>('/maps/');
 export const getMap = (id: number) => api.get<Map>(`/maps/${id}/`);

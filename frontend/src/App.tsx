@@ -7,6 +7,7 @@ import { PlayerPage } from './pages/PlayerPage/PlayerPage';
 import { FactionsPage } from './pages/FactionsPage/FactionsPage';
 import { KnowledgePage } from './pages/KnowledgePage/KnowledgePage';
 import { CharactersPage } from './pages/CharactersPage/CharactersPage';
+import { GalleryPage } from './pages/GalleryPage/GalleryPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, retry: 1 } },
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/map/:mapId/factions" element={<FactionsPage />} />
           <Route path="/map/:mapId/knowledge" element={<KnowledgePage />} />
           <Route path="/map/:mapId/characters" element={<CharactersPage />} />
+          <Route path="/map/:mapId/gallery" element={<GalleryPage />} />
           <Route path="/maps/create" element={<CreateMap />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
