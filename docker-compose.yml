@@ -23,9 +23,10 @@ services:
   frontend:
     image: node:22-alpine
     working_dir: /app
-    command: npm run dev
+    command: npm install && npm run dev
     volumes:
       - ./frontend:/app
+      - /app/node_modules
     ports:
       - "5173:5173"
     environment:
