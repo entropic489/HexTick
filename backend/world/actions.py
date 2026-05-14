@@ -335,7 +335,7 @@ def tick_hex(hex: Hex, tick: Tick) -> HexTick:
 def supply(faction: Faction, hex: Hex) -> ActionResult:
     amount = min(faction.resource_generation, hex.resources)
     faction.resources += amount
-    hex.resources -= modifier(faction.resource_generation)
+    hex.resources -= amount
     faction.save()
     hex.save(update_fields=['resources'])
     return ActionResult(action=Action.SUPPLY, notes=f"+{amount} resources")
