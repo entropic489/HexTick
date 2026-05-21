@@ -85,7 +85,7 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 
 **Tick sequence is per-map.** `Map.current_tick` is the single source of truth for each map's tick number. `Tick` has a `map` FK; `unique_together = [('map', 'number')]`. `tick.number % 3 == 0` is a day; `tick.number % 21 == 0` is a week. Tick 0 never exists.
 
-**`Map.map_type`** is either `regional` (default) or `city`. On city maps, `Map.sub_tick` counts party actions within the current shift (0–2). Each non-movement party action increments `sub_tick`; when `sub_tick % 3 == 0` it resets to 0 and `_run_shift` fires (advancing the global tick). **Movement on city maps does not consume a sub_tick** — it costs speed (still speed-gated by `terrain_difficulty`) but never increments `sub_tick` and never fires `_run_shift`. On regional maps, every party action fires `_run_shift` immediately. Factions still tick once per shift regardless of map type. `PartyTick.sub_tick` records where in the shift the action fell (0 = shift tick, 1 or 2 = mid-shift).
+**`Map.map_type`** is either `regional` (default) or `city`. On city maps, `Map.sub_tick` counts party actions within the current shift (0–2). Every party action increments `sub_tick`; when `sub_tick % 3 == 0` it resets to 0 and `_run_shift` fires (advancing the global tick). On regional maps, every party action fires `_run_shift` immediately. Factions still tick once per shift regardless of map type. `PartyTick.sub_tick` records where in the shift the action fell (0 = shift tick, 1 or 2 = mid-shift).
 
 **Time of day** cycles every 3 ticks: `% 3 == 0` → Morning, `% 3 == 1` → Afternoon, `% 3 == 2` → Night. Current day displayed as `floor(tick / 3)`. Night adds +2 to `terrain_difficulty` for all movement (factions, characters, party) via `night_bonus()` in `utils.py`. The frontend `TimeOfDayBadge` component reads from `GET /api/maps/{map_id}/tick/current/`.
 
@@ -130,6 +130,18 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 **Restless halves `comfort()`** — `comfort()` takes `has_restless: bool`. Callers in `actions.py` compute it via `any(d.disease_type == DiseaseType.RESTLESS for d in faction.diseases.all())` against the prefetched queryset.
 
 **Disease re-contraction uses `update_or_create`** — resets duration rather than stacking.
+
+---
+
+## Faction movement restriction
+
+`Faction.movement_restricted` (BooleanField, default False) + `Faction.allowed_hexes` (M2M to `Hex`, related name `restricted_factions`).
+
+When `movement_restricted=True` and the faction is not a GM faction, `_run_shift` filters `candidates` to only hexes in `allowed_hexes` before passing to `tick_faction`. GM factions are always under manual control and are not affected.
+
+The GM sets `allowed_hexes` via the faction edit form in `HexPanel`: check "Movement restricted", click "Select hexes" to enter `factionHexSelectMode` in Zustand, click hexes on the map (teal highlight, distinct from multi-select gold), then "Done selecting". On save, `PATCH /api/factions/{id}/` sends `movement_restricted` and `allowed_hexes` (list of IDs, `.set()` on the backend like `knowledge`).
+
+Frontend store keys: `factionHexSelectMode`, `factionAllowedHexIds`, `setFactionHexSelectMode(active, initialIds?)`, `toggleFactionAllowedHex(id)`, `clearFactionHexSelect()`. GMPage routes hex clicks to `toggleFactionAllowedHex` when `factionHexSelectMode` is active.
 
 ---
 
@@ -257,7 +269,7 @@ Route: `/map/:mapId/gallery` → `GalleryPage`. Linked via "Gallery" button in t
 **API**
 - `PATCH /api/factions/{id}/action/` not yet implemented as a dedicated endpoint — `next_action` is now editable via `PATCH /api/factions/{id}/` from the HexPanel faction detail
 - Party is fetched via `GET /api/maps/{map_id}/party/` (one party per map via `OneToOneField`). `PATCH /api/party/{id}/` exists and accepts `player_count`, `supplies`, `speed`, `max_speed`, `resource_generation`, `current_action`, `current_hex` (all optional). `current_hex` accepts a hex ID and teleports the party with no speed check.
-- Reverse tick not implemented — returns 501 per spec; engine has no undo
+- Tick history endpoints: `GET /maps/{id}/ticks/` (list tick numbers), `GET /maps/{id}/tick/{n}/state/` (HexTick + FactionTick + most-recent-PartyTick-at-or-before-N snapshots), `POST /maps/{id}/tick/{n}/reset/` (delete future ticks, restore live state from snapshots, set `Map.current_tick`)
 - No API endpoint to edit or delete existing POIs — use Django admin for that
 
 **Backend**
@@ -273,6 +285,7 @@ Route: `/map/:mapId/gallery` → `GalleryPage`. Linked via "Gallery" button in t
 - `ActionModal` is built and wired into `PlayerPage` — opens via "Actions…" button when a hex is selected. Offers Move, Supply, Delve, Search, Social. Each action is enabled/disabled based on context (current hex vs other hex, dungeon presence). `Social` action records the tick but has no game effect.
 - GM faction action-setting modal not yet built — `next_action`, `destination`, `notes`, and `agreeableness` are now editable from the HexPanel faction expand/edit, but a dedicated modal for full faction management is not built
 - `patchPartyTickNotes` wired in `api/tick.ts` but no UI to trigger it
+- **Tick history / time-travel**: `viewingTickNumber: number | null` in Zustand (null = live). ◀ Shift navigates backward into history; while in history mode, Shift ▶ / Day ▶▶ are hidden and replaced by ▶ forward, **▶ Live** (returns to present, unlocks players), and **Reset to this tick** (calls reset endpoint then exits history). Entering history auto-sets `player_actions_locked = true`. GMPage fetches historical state via `['tickState', mapId, n]` and merges it over live hexes, factions, and party before passing to HexMap/HexPanel. `PartyTick` lookup uses most-recent-at-or-before, since party ticks only exist when a party action fired.
 - HexMap scroll-to-zoom is broken — anchor drifts toward bottom-right when cursor is not at top-left. Root cause unknown after investigation; pan/zoom now uses native listeners + direct SVG style mutation (refs, no React state). Needs a fresh look.
 - `AddPOIModal` does not support setting the `faction` FK (village type) — needs a faction picker
 

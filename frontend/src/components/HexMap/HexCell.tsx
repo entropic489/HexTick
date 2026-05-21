@@ -10,11 +10,12 @@ interface Props {
   originY: number;
   selected: boolean;
   multiSelected?: boolean;
+  factionAllowed?: boolean;
   fogOfWar: boolean;
   onClick: (hexId: number) => void;
 }
 
-export function HexCell({ hex, factions, size, originX, originY, selected, multiSelected, fogOfWar, onClick }: Props) {
+export function HexCell({ hex, factions, size, originX, originY, selected, multiSelected, factionAllowed, fogOfWar, onClick }: Props) {
   const [cx, cy] = hexToPixel(hex.row, hex.col, size, originX, originY);
   const points = flatTopPoints(cx, cy, size - 1);
   const hidden = fogOfWar && !hex.player_visible;
@@ -23,11 +24,13 @@ export function HexCell({ hex, factions, size, originX, originY, selected, multi
 
   const fill = multiSelected
     ? 'rgba(250,204,21,0.45)'
+    : factionAllowed
+    ? 'rgba(52,211,153,0.4)'
     : selected
     ? 'rgba(255,255,255,0.5)'
     : 'transparent';
-  const stroke = multiSelected ? '#facc15' : selected ? '#fff' : '#555';
-  const strokeWidth = multiSelected || selected ? 2 : 0.5;
+  const stroke = multiSelected ? '#facc15' : factionAllowed ? '#34d399' : selected ? '#fff' : '#555';
+  const strokeWidth = multiSelected || factionAllowed || selected ? 2 : 0.5;
 
   return (
     <g className={styles.cell} onClick={() => !hidden && onClick(hex.id)}>

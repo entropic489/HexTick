@@ -5,6 +5,9 @@ interface GameStore {
   selectedMapId: number | null;
   setSelectedMapId: (id: number | null) => void;
 
+  viewingTickNumber: number | null;
+  setViewingTickNumber: (n: number | null) => void;
+
   selectedHexId: number | null;
   setSelectedHexId: (id: number | null) => void;
 
@@ -21,11 +24,20 @@ interface GameStore {
   selectedHexIds: Set<number>;
   toggleSelectedHex: (id: number) => void;
   clearSelectedHexes: () => void;
+
+  factionHexSelectMode: boolean;
+  factionAllowedHexIds: Set<number>;
+  setFactionHexSelectMode: (active: boolean, initialIds?: Set<number>) => void;
+  toggleFactionAllowedHex: (id: number) => void;
+  clearFactionHexSelect: () => void;
 }
 
 export const useGameStore = create<GameStore>((set) => ({
   selectedMapId: null,
   setSelectedMapId: (id) => set({ selectedMapId: id, selectedHexId: null }),
+
+  viewingTickNumber: null,
+  setViewingTickNumber: (n) => set({ viewingTickNumber: n }),
 
   selectedHexId: null,
   setSelectedHexId: (id) => set({ selectedHexId: id }),
@@ -48,4 +60,18 @@ export const useGameStore = create<GameStore>((set) => ({
       return { selectedHexIds: next };
     }),
   clearSelectedHexes: () => set({ selectedHexIds: new Set() }),
+
+  factionHexSelectMode: false,
+  factionAllowedHexIds: new Set(),
+  setFactionHexSelectMode: (active, initialIds) => set({
+    factionHexSelectMode: active,
+    factionAllowedHexIds: initialIds ? new Set(initialIds) : new Set(),
+  }),
+  toggleFactionAllowedHex: (id) =>
+    set((s) => {
+      const next = new Set(s.factionAllowedHexIds);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return { factionAllowedHexIds: next };
+    }),
+  clearFactionHexSelect: () => set({ factionHexSelectMode: false, factionAllowedHexIds: new Set() }),
 }));

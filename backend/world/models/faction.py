@@ -78,6 +78,11 @@ class Faction(models.Model):
         on_delete=models.SET_NULL, related_name='factions',
     )
 
+    movement_restricted = models.BooleanField(default=False)
+    allowed_hexes = models.ManyToManyField(
+        Hex, blank=True, related_name='restricted_factions'
+    )
+
     current_hex = models.ForeignKey(
         Hex, null=True, blank=True,
         on_delete=models.SET_NULL,

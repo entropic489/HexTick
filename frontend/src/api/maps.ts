@@ -80,6 +80,8 @@ export interface PatchFactionParams {
   knowledge?: number[];
   leader?: number | null;
   image?: number | null;
+  movement_restricted?: boolean;
+  allowed_hexes?: number[];
 }
 
 export const patchFaction = (factionId: number, params: PatchFactionParams) =>

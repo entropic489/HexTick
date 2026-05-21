@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import type { Hex, Faction, Party, Map, TerrainType, WeatherType, ActionType } from '../../types';
 import { patchHex, patchFaction } from '../../api/maps';
+import { useGameStore } from '../../store/useGameStore';
 import { patchParty } from '../../api/tick';
 import { getGallery, publishGalleryImage } from '../../api/gallery';
 import { AddPOIModal } from '../AddPOIModal/AddPOIModal';
@@ -48,6 +49,8 @@ interface FactionEditState {
   next_action: ActionType | null;
   agreeableness: number;
   image: number | null;
+  movement_restricted: boolean;
+  allowed_hexes: number[];
 }
 
 interface EditState {
@@ -95,6 +98,10 @@ interface Props {
 export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmMode, prepMode = false, mapId, map, party, onClose, children }: Props) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const factionHexSelectMode = useGameStore((s) => s.factionHexSelectMode);
+  const factionAllowedHexIds = useGameStore((s) => s.factionAllowedHexIds);
+  const setFactionHexSelectMode = useGameStore((s) => s.setFactionHexSelectMode);
+  const clearFactionHexSelect = useGameStore((s) => s.clearFactionHexSelect);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditState | null>(null);
   const [addingPOI, setAddingPOI] = useState(false);
@@ -149,10 +156,12 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
       const destination = params.destRow === '' && params.destCol === ''
         ? null
         : (destHex?.id ?? null);
-      return patchFaction(id, { notes: params.notes, next_action: params.next_action, destination, agreeableness: params.agreeableness, image: params.image });
+      const allowed_hexes = factionHexSelectMode ? [...factionAllowedHexIds] : params.allowed_hexes;
+      return patchFaction(id, { notes: params.notes, next_action: params.next_action, destination, agreeableness: params.agreeableness, image: params.image, movement_restricted: params.movement_restricted, allowed_hexes });
     },
     onSuccess: (_, { id }) => {
       if (mapId != null) queryClient.invalidateQueries({ queryKey: ['factions', mapId] });
+      clearFactionHexSelect();
       setEditingFactionId(null);
       setExpandedFactionId(id);
     },
@@ -489,7 +498,7 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   const destHex = hexes.find((h) => h.id === f.destination);
-                                  setFactionDraft({ notes: f.notes, destRow: destHex ? String(destHex.row) : '', destCol: destHex ? String(destHex.col) : '', next_action: f.next_action, agreeableness: f.agreeableness, image: f.image });
+                                  setFactionDraft({ notes: f.notes, destRow: destHex ? String(destHex.row) : '', destCol: destHex ? String(destHex.col) : '', next_action: f.next_action, agreeableness: f.agreeableness, image: f.image, movement_restricted: f.movement_restricted, allowed_hexes: f.allowed_hexes });
                                   setEditingFactionId(f.id);
                                 }}
                               >
@@ -566,6 +575,42 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
                                   onChange={(e) => setFactionDraft((d) => d && { ...d, notes: e.target.value })}
                                 />
                               </label>
+                              <label className={styles.checkLabel}>
+                                <input
+                                  type="checkbox"
+                                  checked={factionDraft.movement_restricted}
+                                  onChange={(e) => setFactionDraft((d) => d && { ...d, movement_restricted: e.target.checked })}
+                                />
+                                Movement restricted
+                              </label>
+                              {factionDraft.movement_restricted && (
+                                <div className={styles.factionEditLabel}>
+                                  <span>
+                                    Allowed hexes
+                                    {factionHexSelectMode
+                                      ? ` (${factionAllowedHexIds.size} selected — click hexes on map)`
+                                      : ` (${factionDraft.allowed_hexes.length} saved)`}
+                                  </span>
+                                  {factionHexSelectMode ? (
+                                    <button
+                                      className={styles.cancelBtn}
+                                      onClick={() => {
+                                        setFactionDraft((d) => d && { ...d, allowed_hexes: [...factionAllowedHexIds] });
+                                        setFactionHexSelectMode(false);
+                                      }}
+                                    >
+                                      Done selecting
+                                    </button>
+                                  ) : (
+                                    <button
+                                      className={styles.editBtn}
+                                      onClick={() => setFactionHexSelectMode(true, new Set(factionDraft.allowed_hexes))}
+                                    >
+                                      Select hexes
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                               <div className={styles.factionEditActions}>
                                 <button
                                   className={styles.saveBtn}
@@ -576,7 +621,7 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
                                 </button>
                                 <button
                                   className={styles.cancelBtn}
-                                  onClick={() => setEditingFactionId(null)}
+                                  onClick={() => { clearFactionHexSelect(); setEditingFactionId(null); }}
                                 >
                                   Cancel
                                 </button>

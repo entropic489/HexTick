@@ -278,6 +278,8 @@ class FactionSchema(Schema):
     knowledge: list[int] = []
     leader: Optional[int] = None
     image: Optional[int] = None
+    movement_restricted: bool = False
+    allowed_hexes: list[int] = []
 
     @staticmethod
     def resolve_current_hex(obj):
@@ -298,6 +300,10 @@ class FactionSchema(Schema):
     @staticmethod
     def resolve_image(obj):
         return obj.image_id
+
+    @staticmethod
+    def resolve_allowed_hexes(obj):
+        return [h.id for h in obj.allowed_hexes.all()]
 
 
 class FactionCreateSchema(Schema):
@@ -321,7 +327,7 @@ class FactionCreateSchema(Schema):
 @api.get("/maps/{map_id}/factions/", response=list[FactionSchema])
 def list_factions(request, map_id: int):
     get_object_or_404(Map, id=map_id)
-    return list(Faction.objects.filter(current_hex__map_id=map_id).prefetch_related('knowledge'))
+    return list(Faction.objects.filter(current_hex__map_id=map_id).prefetch_related('knowledge', 'allowed_hexes'))
 
 
 class FactionPatchSchema(Schema):
@@ -344,6 +350,8 @@ class FactionPatchSchema(Schema):
     knowledge: Optional[list[int]] = None
     leader: Optional[int] = None
     image: Optional[int] = None
+    movement_restricted: Optional[bool] = None
+    allowed_hexes: Optional[list[int]] = None
 
 
 @api.patch("/factions/{faction_id}/", response=FactionSchema)
@@ -365,11 +373,14 @@ def patch_faction(request, faction_id: int, body: FactionPatchSchema):
         image_id = data.pop('image')
         faction.image = get_object_or_404(GalleryImage, id=image_id) if image_id is not None else None
     knowledge_ids = data.pop('knowledge', None)
+    allowed_hex_ids = data.pop('allowed_hexes', None)
     for field, value in data.items():
         setattr(faction, field, value)
     faction.save()
     if knowledge_ids is not None:
         faction.knowledge.set(Knowledge.objects.filter(id__in=knowledge_ids))
+    if allowed_hex_ids is not None:
+        faction.allowed_hexes.set(Hex.objects.filter(id__in=allowed_hex_ids))
     return faction
 
 
@@ -635,7 +646,7 @@ def _run_shift(map_id: int) -> tuple[int, list[dict]]:
     map_obj.save(update_fields=['current_tick'])
 
     hexes = list(Hex.objects.filter(map_id=map_id).prefetch_related('pois'))
-    factions = list(Faction.objects.filter(current_hex__map_id=map_id, is_dead=False).prefetch_related('diseases'))
+    factions = list(Faction.objects.filter(current_hex__map_id=map_id, is_dead=False).prefetch_related('diseases', 'allowed_hexes'))
 
     for hex in hexes:
         tick_hex(hex, tick)
@@ -650,6 +661,9 @@ def _run_shift(map_id: int) -> tuple[int, list[dict]]:
             and hex_distance(faction.current_hex, f.current_hex) <= modifier(faction.scouting)
         ]
         candidates = adjacent_hexes(faction.current_hex, hexes) if faction.current_hex else []
+        if faction.movement_restricted and not faction.is_gm_faction:
+            allowed_ids = {h.id for h in faction.allowed_hexes.all()}
+            candidates = [h for h in candidates if h.id in allowed_ids]
         ft = tick_faction(faction, tick, nearby, candidates)
         faction_ticks.append((faction, ft))
 
@@ -763,6 +777,144 @@ class CurrentTickSchema(Schema):
 def get_current_tick(request, map_id: int):
     map_obj = get_object_or_404(Map, id=map_id)
     return {"tick_number": map_obj.current_tick.number if map_obj.current_tick else 0}
+
+
+@api.get("/maps/{map_id}/ticks/", response=list[int])
+def list_ticks(request, map_id: int):
+    map_obj = get_object_or_404(Map, id=map_id)
+    return list(Tick.objects.filter(map=map_obj).values_list('number', flat=True).order_by('number'))
+
+
+class HexTickStateSchema(Schema):
+    hex_id: int
+    terrain_type: str
+    resources: int
+    weather: str
+    encounter_likelihood: int
+    player_explored: bool
+    player_visible: bool
+
+
+class FactionTickStateSchema(Schema):
+    faction_id: int
+    is_mobile: bool
+    speed: int
+    population: int
+    technology: int
+    technology_max: int
+    resources: int
+    agreeableness: int
+    combat_skill: int
+    current_hex: Optional[int]
+    destination: Optional[int]
+    action: Optional[str]
+
+
+class PartyTickStateSchema(Schema):
+    current_hex: Optional[int]
+    destination: Optional[int]
+    action: Optional[str]
+    last_action: Optional[str]
+    notes: str
+
+
+class TickStateSchema(Schema):
+    tick_number: int
+    hex_ticks: list[HexTickStateSchema]
+    faction_ticks: list[FactionTickStateSchema]
+    party_tick: Optional[PartyTickStateSchema]
+
+
+@api.get("/maps/{map_id}/tick/{tick_number}/state/", response=TickStateSchema)
+def get_tick_state(request, map_id: int, tick_number: int):
+    map_obj = get_object_or_404(Map, id=map_id)
+    tick = get_object_or_404(Tick, map=map_obj, number=tick_number)
+    pt = (
+        PartyTick.objects
+        .filter(tick__map=map_obj, tick__number__lte=tick_number)
+        .order_by('-tick__number')
+        .first()
+    )
+    return {
+        'tick_number': tick_number,
+        'hex_ticks': [
+            {
+                'hex_id': ht.hex_id,
+                'terrain_type': ht.terrain_type,
+                'resources': ht.resources,
+                'weather': ht.weather,
+                'encounter_likelihood': ht.encounter_likelihood,
+                'player_explored': ht.player_explored,
+                'player_visible': ht.player_visible,
+            }
+            for ht in tick.hex_ticks.all()
+        ],
+        'faction_ticks': [
+            {
+                'faction_id': ft.faction_id,
+                'is_mobile': ft.is_mobile,
+                'speed': ft.speed,
+                'population': ft.population,
+                'technology': ft.technology,
+                'technology_max': ft.technology_max,
+                'resources': ft.resources,
+                'agreeableness': ft.agreeableness,
+                'combat_skill': ft.combat_skill,
+                'current_hex': ft.current_hex_id,
+                'destination': ft.destination_id,
+                'action': ft.action,
+            }
+            for ft in tick.faction_ticks.all()
+        ],
+        'party_tick': {
+            'current_hex': pt.current_hex_id,
+            'destination': pt.destination_id,
+            'action': pt.action,
+            'last_action': pt.last_action,
+            'notes': pt.notes,
+        } if pt else None,
+    }
+
+
+@api.post("/maps/{map_id}/tick/{tick_number}/reset/", response=CurrentTickSchema)
+@transaction.atomic
+def reset_to_tick(request, map_id: int, tick_number: int):
+    map_obj = get_object_or_404(Map, id=map_id)
+    tick = get_object_or_404(Tick, map=map_obj, number=tick_number)
+
+    # Delete all future ticks (cascades to HexTick, FactionTick, PartyTick)
+    Tick.objects.filter(map=map_obj, number__gt=tick_number).delete()
+
+    # Restore live hex state from snapshots
+    for ht in tick.hex_ticks.all():
+        Hex.objects.filter(id=ht.hex_id).update(
+            terrain_type=ht.terrain_type,
+            resources=ht.resources,
+            weather=ht.weather,
+            encounter_likelihood=ht.encounter_likelihood,
+            player_explored=ht.player_explored,
+            player_visible=ht.player_visible,
+        )
+
+    # Restore live faction state from snapshots
+    for ft in tick.faction_ticks.all():
+        Faction.objects.filter(id=ft.faction_id).update(
+            speed=ft.speed,
+            population=ft.population,
+            technology=ft.technology,
+            technology_max=ft.technology_max,
+            resources=ft.resources,
+            agreeableness=ft.agreeableness,
+            combat_skill=ft.combat_skill,
+            current_hex_id=ft.current_hex_id,
+            destination_id=ft.destination_id,
+        )
+
+    map_obj.current_tick = tick
+    map_obj.save(update_fields=['current_tick'])
+
+    transaction.on_commit(lambda: broadcast_tick(map_id, tick_number))
+    return {'tick_number': tick_number}
 
 
 @api.get("/maps/{map_id}/party/", response=PartySchema)
@@ -898,7 +1050,7 @@ def party_action(request, party_id: int, body: PartyActionSchema):
     map_obj = Map.objects.get(id=map_id) if map_id else None
     is_city = map_obj and map_obj.map_type == MapType.CITY
 
-    if is_city and body.action != 'move':
+    if is_city:
         map_obj.sub_tick += 1
         is_shift = map_obj.sub_tick % 3 == 0
         if is_shift:

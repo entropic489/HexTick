@@ -22,6 +22,7 @@ interface Props {
   factions: Faction[];
   selectedHexId: number | null;
   selectedHexIds?: Set<number>;
+  factionAllowedHexIds?: Set<number>;
   fogOfWar: boolean;
   partyHexId: number | null;
   focusHex?: Hex | null;
@@ -30,7 +31,7 @@ interface Props {
 
 const MAX_SCALE = 8;
 
-export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fogOfWar, partyHexId, focusHex, onHexClick }: Props) {
+export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, factionAllowedHexIds, fogOfWar, partyHexId, focusHex, onHexClick }: Props) {
   const factionsByHex = useMemo(() => {
     const m = new Map<number, Faction[]>();
     for (const f of factions) {
@@ -218,6 +219,7 @@ export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fo
             originY={map.origin_y}
             selected={hex.id === selectedHexId}
             multiSelected={selectedHexIds?.has(hex.id) ?? false}
+            factionAllowed={factionAllowedHexIds?.has(hex.id) ?? false}
             fogOfWar={fogOfWar}
             onClick={onHexClick}
           />
