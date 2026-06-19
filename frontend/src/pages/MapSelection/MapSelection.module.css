@@ -80,6 +80,37 @@
 
 .create:hover { background: #b4d0fa; }
 
+.dupRow {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
+}
+
+.dupInput {
+  flex: 1;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  background: #181825;
+  color: #cdd6f4;
+  font-size: 0.9rem;
+}
+
+.dupRow button {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  background: #313244;
+  color: #cdd6f4;
+  cursor: pointer;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.dupRow button:hover:not(:disabled) { background: #45475a; }
+.dupRow button:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .status {
   display: flex;
   align-items: center;

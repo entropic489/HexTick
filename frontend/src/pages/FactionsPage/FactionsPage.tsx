@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getMap, getFactions, getKnowledge, getCharacters, patchFaction } from '../../api/maps';
+import { getMap, getFactions, getKnowledge, patchFaction } from '../../api/maps';
 import { useGameStore } from '../../store/useGameStore';
-import type { Faction, Knowledge, Character } from '../../types';
+import type { Faction, Knowledge } from '../../types';
 import styles from './FactionsPage.module.css';
 
 type EditDraft = Partial<Omit<Faction, 'id' | 'is_famine' | 'is_dying' | 'max_speed' | 'last_action' | 'current_action'>>;
@@ -84,85 +84,7 @@ function KnowledgeDropdown({
   );
 }
 
-function LeaderDropdown({
-  options,
-  selected,
-  onChange,
-}: {
-  options: Character[];
-  selected: number | null;
-  onChange: (id: number | null) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
-
-  const selectedChar = options.find((o) => o.id === selected) ?? null;
-  const filtered = options.filter(
-    (o) => o.name.toLowerCase().includes(query.toLowerCase())
-  );
-
-  function select(id: number) {
-    onChange(id);
-    setQuery('');
-    setOpen(false);
-  }
-
-  function clear() {
-    onChange(null);
-    setQuery('');
-  }
-
-  return (
-    <div className={styles.dropdownWrap} ref={containerRef}>
-      <div className={styles.dropdownControl} onClick={() => setOpen(true)}>
-        {selectedChar ? (
-          <span className={styles.selectedTag}>
-            {selectedChar.name}
-            <button
-              className={styles.tagRemove}
-              onClick={(e) => { e.stopPropagation(); clear(); }}
-            >
-              ✕
-            </button>
-          </span>
-        ) : null}
-        {!selectedChar && (
-          <input
-            className={styles.dropdownInput}
-            value={query}
-            placeholder="Search…"
-            onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-            onFocus={() => setOpen(true)}
-          />
-        )}
-      </div>
-      {open && filtered.length > 0 && (
-        <div className={styles.dropdownMenu}>
-          {filtered.map((item) => (
-            <div
-              key={item.id}
-              className={styles.dropdownOption}
-              onMouseDown={(e) => { e.preventDefault(); select(item.id); }}
-            >
-              {item.name}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function StatField({
   label,
@@ -197,13 +119,11 @@ function FactionRow({
   faction,
   mapId,
   allKnowledge,
-  allCharacters,
   onShowOnMap,
 }: {
   faction: Faction;
   mapId: number;
   allKnowledge: Knowledge[];
-  allCharacters: Character[];
   onShowOnMap: (hexId: number) => void;
 }) {
   const queryClient = useQueryClient();
@@ -329,20 +249,19 @@ function FactionRow({
       {editing && (
         <div className={styles.knowledgeRow}>
           <span className={styles.statLabel}>Leader</span>
-          <LeaderDropdown
-            options={allCharacters}
-            selected={d.leader ?? null}
-            onChange={(id) => setDraft((p) => ({ ...p, leader: id }))}
+          <input
+            type="text"
+            value={d.leader ?? ''}
+            onChange={(e) => setDraft((p) => ({ ...p, leader: e.target.value }))}
+            placeholder="Leader name"
           />
         </div>
       )}
 
-      {!editing && faction.leader !== null && (
+      {!editing && faction.leader && (
         <div className={styles.knowledgeTags}>
           <span className={styles.statLabel}>Leader</span>
-          <span className={styles.knowledgeTag}>
-            {allCharacters.find((c) => c.id === faction.leader)?.name ?? `#${faction.leader}`}
-          </span>
+          <span className={styles.knowledgeTag}>{faction.leader}</span>
         </div>
       )}
 
@@ -380,7 +299,6 @@ export function FactionsPage() {
   const { data: map } = useQuery({ queryKey: ['map', id], queryFn: () => getMap(id) });
   const { data: factions = [] } = useQuery({ queryKey: ['factions', id], queryFn: () => getFactions(id) });
   const { data: allKnowledge = [] } = useQuery({ queryKey: ['knowledge', id], queryFn: () => getKnowledge(id) });
-  const { data: allCharacters = [] } = useQuery({ queryKey: ['characters', id], queryFn: () => getCharacters(id) });
 
   const filtered = factions.filter((f) =>
     f.name.toLowerCase().includes(search.toLowerCase())
@@ -414,7 +332,7 @@ export function FactionsPage() {
           <div className={styles.empty}>No factions found.</div>
         )}
         {filtered.map((f) => (
-          <FactionRow key={f.id} faction={f} mapId={id} allKnowledge={allKnowledge} allCharacters={allCharacters} onShowOnMap={handleShowOnMap} />
+          <FactionRow key={f.id} faction={f} mapId={id} allKnowledge={allKnowledge} onShowOnMap={handleShowOnMap} />
         ))}
       </div>
     </div>

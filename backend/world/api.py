@@ -2,7 +2,6 @@ import json
 from typing import Optional
 import redis
 from django.conf import settings as django_settings
-from django.db.models import Q
 from django.http import StreamingHttpResponse
 from ninja import NinjaAPI, Schema, File, Form
 from ninja.files import UploadedFile
@@ -10,10 +9,9 @@ from django.shortcuts import get_object_or_404
 from django.db import transaction
 from world.models import Map, MapType, Hex, PointOfInterest, Faction, Tick, FactionTick, PartyTick, GalleryImage
 from world.models.characters import Knowledge
-from world.models.characters import Character
 from world.models.party import Party
 from world.models.faction import Action
-from world.actions import tick_hex, tick_faction, tick_character, tick_party, reveal_hex_on_move, reveal_pois_on_search
+from world.actions import tick_hex, tick_faction, tick_party, reveal_hex_on_move, reveal_pois_on_search
 from world.utils import hex_distance, modifier, adjacent_hexes, night_bonus, move_difficulty
 
 api = NinjaAPI(urls_namespace="api")
@@ -86,6 +84,17 @@ def set_map_locked(request, map_id: int, body: MapLockSchema):
     return map_obj
 
 
+class HexHighlightSchema(Schema):
+    hex_id: Optional[int]
+
+
+@api.post("/maps/{map_id}/highlight/", response={200: dict})
+def set_hex_highlight(request, map_id: int, body: HexHighlightSchema):
+    get_object_or_404(Map, id=map_id)
+    _redis.publish(_sse_channel(map_id), json.dumps({"type": "hex_highlight", "hex_id": body.hex_id}))
+    return {"hex_id": body.hex_id}
+
+
 @api.post("/maps/", response=MapSchema)
 def create_map(
     request,
@@ -128,6 +137,197 @@ def create_map(
             for c in range(cols)
         ])
     return m
+
+
+class DuplicateMapSchema(Schema):
+    name: str
+
+
+@api.post("/maps/{map_id}/duplicate/", response=MapSchema)
+def duplicate_map(request, map_id: int, body: DuplicateMapSchema):
+    from world.models.faction import ActiveDisease
+
+    source = get_object_or_404(Map, id=map_id)
+
+    with transaction.atomic():
+        # --- New Map ---
+        new_map = Map(
+            name=body.name,
+            image=source.image,
+            hex_size=source.hex_size,
+            origin_x=source.origin_x,
+            origin_y=source.origin_y,
+            fog_of_war=source.fog_of_war,
+            map_type=source.map_type,
+            sub_tick=0,
+            player_actions_locked=False,
+            current_tick=None,
+        )
+        new_map.save()
+
+        # --- Knowledge ---
+        knowledge_map: dict[int, int] = {}  # old_id -> new_id
+        old_knowledge = list(source.knowledge.prefetch_related('related_knowledge').all())
+        for k in old_knowledge:
+            new_k = Knowledge(
+                map=new_map,
+                title=k.title,
+                description=k.description,
+                do_players_know=k.do_players_know,
+                age=k.age,
+            )
+            new_k.save()
+            knowledge_map[k.id] = new_k.id
+        # Wire related_knowledge M2M after all knowledge cloned
+        new_knowledge_by_old = {k.id: Knowledge.objects.get(id=knowledge_map[k.id]) for k in old_knowledge}
+        for k in old_knowledge:
+            new_k = new_knowledge_by_old[k.id]
+            related_ids = [knowledge_map[r.id] for r in k.related_knowledge.all() if r.id in knowledge_map]
+            if related_ids:
+                new_k.related_knowledge.set(related_ids)
+
+        # --- Gallery Images ---
+        gallery_map: dict[int, int] = {}  # old_id -> new_id
+        for gi in source.gallery_images.all():
+            new_gi = GalleryImage(
+                map=new_map,
+                name=gi.name,
+                image=gi.image,
+                is_published=False,
+            )
+            new_gi.save()
+            gallery_map[gi.id] = new_gi.id
+
+        # --- Hexes ---
+        hex_map: dict[int, int] = {}  # old_id -> new_id
+        old_hexes = list(source.hexes.all())
+        for h in old_hexes:
+            new_h = Hex(
+                map=new_map,
+                row=h.row,
+                col=h.col,
+                terrain_type=h.terrain_type,
+                resources=h.resources,
+                weather=h.weather,
+                encounter_likelihood=h.encounter_likelihood,
+                player_explored=h.player_explored,
+                player_visible=h.player_visible,
+                has_roads=h.has_roads,
+                has_rivers=h.has_rivers,
+                can_enter=h.can_enter,
+                linked_map=h.linked_map,
+            )
+            new_h.save()
+            hex_map[h.id] = new_h.id
+
+        # --- POIs (faction FK deferred) ---
+        poi_map: dict[int, int] = {}  # old_id -> new_id (needed for POI knowledge M2M)
+        old_pois = list(PointOfInterest.objects.filter(hex__map=source).prefetch_related('knowledge').select_related('hex'))
+        for poi in old_pois:
+            new_poi = PointOfInterest(
+                hex_id=hex_map[poi.hex_id],
+                poi_type=poi.poi_type,
+                name=poi.name,
+                difficulty=poi.difficulty,
+                title=poi.title,
+                description=poi.description,
+                notes=poi.notes,
+                technology_max_modifier=poi.technology_max_modifier,
+                faction=None,  # filled after factions cloned
+                monster_type=poi.monster_type,
+                age=poi.age,
+                player_visible=poi.player_visible,
+                player_explored=poi.player_explored,
+                hidden=poi.hidden,
+            )
+            new_poi.save()
+            poi_map[poi.id] = new_poi.id
+            k_ids = [knowledge_map[k.id] for k in poi.knowledge.all() if k.id in knowledge_map]
+            if k_ids:
+                new_poi.knowledge.set(k_ids)
+
+        # --- Factions ---
+        faction_map: dict[int, int] = {}  # old_id -> new_id
+        old_factions = list(
+            Faction.objects.filter(current_hex__map=source)
+            .prefetch_related('knowledge', 'allowed_hexes', 'diseases')
+        )
+        for f in old_factions:
+            new_f = Faction(
+                name=f.name,
+                leader=f.leader,
+                color=f.color,
+                is_mobile=f.is_mobile,
+                is_player_faction=f.is_player_faction,
+                is_gm_faction=f.is_gm_faction,
+                speed=f.speed,
+                population=f.population,
+                technology=f.technology,
+                technology_max=f.technology_max,
+                resources=f.resources,
+                agreeableness=f.agreeableness,
+                combat_skill=f.combat_skill,
+                scouting=f.scouting,
+                theology=f.theology,
+                notes=f.notes,
+                current_action=f.current_action,
+                next_action=f.next_action,
+                last_action=f.last_action,
+                population_trend_override=f.population_trend_override,
+                is_dead=f.is_dead,
+                famine_streak=f.famine_streak,
+                movement_restricted=f.movement_restricted,
+                image_id=gallery_map.get(f.image_id) if f.image_id else None,
+                current_hex_id=hex_map.get(f.current_hex_id) if f.current_hex_id else None,
+                destination_id=hex_map.get(f.destination_id) if f.destination_id else None,
+            )
+            new_f.save()
+            faction_map[f.id] = new_f.id
+
+            k_ids = [knowledge_map[k.id] for k in f.knowledge.all() if k.id in knowledge_map]
+            if k_ids:
+                new_f.knowledge.set(k_ids)
+
+            allowed_ids = [hex_map[h.id] for h in f.allowed_hexes.all() if h.id in hex_map]
+            if allowed_ids:
+                new_f.allowed_hexes.set(allowed_ids)
+
+            for disease in f.diseases.all():
+                ActiveDisease.objects.create(
+                    faction=new_f,
+                    disease_type=disease.disease_type,
+                    duration_days_remaining=disease.duration_days_remaining,
+                    effect_value=disease.effect_value,
+                )
+
+        # --- Back-fill POI faction FKs ---
+        for poi in old_pois:
+            if poi.faction_id and poi.faction_id in faction_map:
+                PointOfInterest.objects.filter(id=poi_map[poi.id]).update(faction_id=faction_map[poi.faction_id])
+
+        # --- Party ---
+        try:
+            p = source.party
+        except Party.DoesNotExist:
+            p = None
+        if p is not None:
+            Party.objects.create(
+                name=p.name,
+                map=new_map,
+                faction_id=faction_map.get(p.faction_id) if p.faction_id else None,
+                player_count=p.player_count,
+                speed=p.speed,
+                max_speed=p.max_speed,
+                resource_generation=p.resource_generation,
+                supplies=p.supplies,
+                current_hex_id=hex_map.get(p.current_hex_id) if p.current_hex_id else None,
+                destination_id=hex_map.get(p.destination_id) if p.destination_id else None,
+                tracks_supplies=p.tracks_supplies,
+                current_action=p.current_action,
+                last_action=p.last_action,
+            )
+
+    return new_map
 
 
 class POISchema(Schema):
@@ -276,7 +476,7 @@ class FactionSchema(Schema):
     next_action: Optional[str] = None
     notes: str = ''
     knowledge: list[int] = []
-    leader: Optional[int] = None
+    leader: str = ''
     image: Optional[int] = None
     movement_restricted: bool = False
     allowed_hexes: list[int] = []
@@ -348,7 +548,7 @@ class FactionPatchSchema(Schema):
     next_action: Optional[str] = None
     notes: Optional[str] = None
     knowledge: Optional[list[int]] = None
-    leader: Optional[int] = None
+    leader: Optional[str] = None
     image: Optional[int] = None
     movement_restricted: Optional[bool] = None
     allowed_hexes: Optional[list[int]] = None
@@ -366,9 +566,6 @@ def patch_faction(request, faction_id: int, body: FactionPatchSchema):
     if 'destination' in data:
         dest_id = data.pop('destination')
         faction.destination = get_object_or_404(Hex, id=dest_id) if dest_id is not None else None
-    if 'leader' in data:
-        leader_id = data.pop('leader')
-        faction.leader = get_object_or_404(Character, id=leader_id) if leader_id is not None else None
     if 'image' in data:
         image_id = data.pop('image')
         faction.image = get_object_or_404(GalleryImage, id=image_id) if image_id is not None else None
@@ -484,141 +681,6 @@ def patch_knowledge(request, knowledge_id: int, body: KnowledgePatchSchema):
 
 # --- Characters ---
 
-class CharacterSchema(Schema):
-    id: int
-    name: str
-    age: Optional[int]
-    faction: Optional[int]
-    is_player: bool
-    is_leader: bool
-    is_wanderer: bool
-    is_dead: bool
-    can_merge: bool
-    combat_skill: int
-    speed: int
-    max_speed: int
-    scouting: int
-    resource_generation: int
-    ration_limit: int
-    rations: int
-    famine_streak: int
-    current_hex: Optional[int]
-    destination: Optional[int]
-    notes: str
-    drive: str
-    knowledge: list[int] = []
-
-    @staticmethod
-    def resolve_faction(obj):
-        return obj.faction_id
-
-    @staticmethod
-    def resolve_current_hex(obj):
-        return obj.current_hex_id
-
-    @staticmethod
-    def resolve_destination(obj):
-        return obj.destination_id
-
-    @staticmethod
-    def resolve_knowledge(obj):
-        return [k.id for k in obj.knowledge.all()]
-
-
-class CharacterCreateSchema(Schema):
-    name: str
-    age: Optional[int] = None
-    faction: Optional[int] = None
-    is_player: bool = False
-    is_leader: bool = False
-    is_wanderer: bool = False
-    can_merge: bool = True
-    combat_skill: int = 10
-    speed: int = 0
-    max_speed: int = 4
-    scouting: int = 0
-    resource_generation: int = 1
-    ration_limit: int = 5
-    rations: int = 0
-    current_hex: Optional[int] = None
-    notes: str = ''
-    drive: str = ''
-    knowledge: list[int] = []
-
-
-class CharacterPatchSchema(Schema):
-    name: Optional[str] = None
-    age: Optional[int] = None
-    faction: Optional[int] = None
-    is_player: Optional[bool] = None
-    is_leader: Optional[bool] = None
-    is_wanderer: Optional[bool] = None
-    is_dead: Optional[bool] = None
-    can_merge: Optional[bool] = None
-    combat_skill: Optional[int] = None
-    speed: Optional[int] = None
-    max_speed: Optional[int] = None
-    scouting: Optional[int] = None
-    resource_generation: Optional[int] = None
-    ration_limit: Optional[int] = None
-    rations: Optional[int] = None
-    current_hex: Optional[int] = None
-    destination: Optional[int] = None
-    notes: Optional[str] = None
-    drive: Optional[str] = None
-    knowledge: Optional[list[int]] = None
-
-
-@api.get("/maps/{map_id}/characters/", response=list[CharacterSchema])
-def list_characters(request, map_id: int):
-    get_object_or_404(Map, id=map_id)
-    return list(Character.objects.filter(
-        Q(current_hex__map_id=map_id) | Q(faction__current_hex__map_id=map_id)
-    ).distinct().prefetch_related('knowledge'))
-
-
-@api.post("/maps/{map_id}/characters/", response=CharacterSchema)
-@transaction.atomic
-def create_character(request, map_id: int, body: CharacterCreateSchema):
-    get_object_or_404(Map, id=map_id)
-    data = body.dict(exclude_unset=True)
-    faction_id = data.pop('faction', None)
-    current_hex_id = data.pop('current_hex', None)
-    knowledge_ids = data.pop('knowledge', [])
-    char = Character(**data)
-    if faction_id is not None:
-        char.faction = get_object_or_404(Faction, id=faction_id)
-    if current_hex_id is not None:
-        char.current_hex = get_object_or_404(Hex, id=current_hex_id)
-    char.save()
-    if knowledge_ids:
-        char.knowledge.set(Knowledge.objects.filter(id__in=knowledge_ids))
-    return char
-
-
-@api.patch("/characters/{character_id}/", response=CharacterSchema)
-@transaction.atomic
-def patch_character(request, character_id: int, body: CharacterPatchSchema):
-    char = get_object_or_404(Character, id=character_id)
-    data = body.dict(exclude_unset=True)
-    if 'faction' in data:
-        fid = data.pop('faction')
-        char.faction = get_object_or_404(Faction, id=fid) if fid is not None else None
-    if 'current_hex' in data:
-        hid = data.pop('current_hex')
-        char.current_hex = get_object_or_404(Hex, id=hid) if hid is not None else None
-    if 'destination' in data:
-        did = data.pop('destination')
-        char.destination = get_object_or_404(Hex, id=did) if did is not None else None
-    knowledge_ids = data.pop('knowledge', None)
-    for field, value in data.items():
-        setattr(char, field, value)
-    char.save()
-    if knowledge_ids is not None:
-        char.knowledge.set(Knowledge.objects.filter(id__in=knowledge_ids))
-    return char
-
-
 # --- Tick ---
 
 class TickEventSchema(Schema):
@@ -666,16 +728,6 @@ def _run_shift(map_id: int) -> tuple[int, list[dict]]:
             candidates = [h for h in candidates if h.id in allowed_ids]
         ft = tick_faction(faction, tick, nearby, candidates)
         faction_ticks.append((faction, ft))
-
-    factions_by_hex: dict[int, list[Faction]] = {}
-    for f in factions:
-        if f.current_hex_id:
-            factions_by_hex.setdefault(f.current_hex_id, []).append(f)
-
-    characters = list(Character.objects.filter(current_hex__map_id=map_id))
-    for character in characters:
-        factions_on_hex = factions_by_hex.get(character.current_hex_id, []) if character.current_hex_id else []
-        tick_character(character, tick, factions_on_hex)
 
     try:
         party = Party.objects.get(map_id=map_id)
@@ -736,7 +788,6 @@ class PartySchema(Schema):
     name: str
     map: Optional[int]
     faction: Optional[int]
-    characters: list[int]
     player_count: int
     speed: int
     max_speed: int
@@ -755,10 +806,6 @@ class PartySchema(Schema):
     @staticmethod
     def resolve_faction(obj):
         return obj.faction_id
-
-    @staticmethod
-    def resolve_characters(obj):
-        return [c.id for c in obj.characters.all()]
 
     @staticmethod
     def resolve_current_hex(obj):
@@ -787,7 +834,6 @@ def list_ticks(request, map_id: int):
 
 class HexTickStateSchema(Schema):
     hex_id: int
-    terrain_type: str
     resources: int
     weather: str
     encounter_likelihood: int
@@ -840,7 +886,6 @@ def get_tick_state(request, map_id: int, tick_number: int):
         'hex_ticks': [
             {
                 'hex_id': ht.hex_id,
-                'terrain_type': ht.terrain_type,
                 'resources': ht.resources,
                 'weather': ht.weather,
                 'encounter_likelihood': ht.encounter_likelihood,
@@ -888,7 +933,6 @@ def reset_to_tick(request, map_id: int, tick_number: int):
     # Restore live hex state from snapshots
     for ht in tick.hex_ticks.all():
         Hex.objects.filter(id=ht.hex_id).update(
-            terrain_type=ht.terrain_type,
             resources=ht.resources,
             weather=ht.weather,
             encounter_likelihood=ht.encounter_likelihood,
@@ -917,11 +961,11 @@ def reset_to_tick(request, map_id: int, tick_number: int):
     return {'tick_number': tick_number}
 
 
+
 @api.get("/maps/{map_id}/party/", response=PartySchema)
 def get_party(request, map_id: int):
     map_obj = get_object_or_404(Map, id=map_id)
     party = get_object_or_404(Party, map=map_obj)
-    party.characters.all()  # prefetch
     return party
 
 
@@ -970,17 +1014,20 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         if not party.current_hex or destination.map_id != party.current_hex.map_id:
             return api.create_response(request, {'detail': 'Destination hex is not on the same map.'}, status=400)
 
-        map_current = Map.objects.get(id=map_id).current_tick if map_id else None
+        move_map = Map.objects.get(id=map_id) if map_id else None
+        map_current = move_map.current_tick if move_map else None
         current_tick_number = map_current.number if map_current else 0
         move_cost = move_difficulty(party.current_hex, destination, current_tick_number)
-        if move_cost > party.speed:
-            return api.create_response(request, {'detail': 'You must rest before traveling here.'}, status=400)
+        if move_map and move_map.map_type != MapType.CITY:
+            if move_cost > party.speed:
+                return api.create_response(request, {'detail': 'You must rest before traveling here.'}, status=400)
 
         old_hex = party.current_hex
         map_id = old_hex.map_id
         party.last_action = party.current_action
         party.current_action = Action.TRAVEL
-        party.speed -= move_cost
+        if not (move_map and move_map.map_type == MapType.CITY):
+            party.speed -= move_cost
         party.current_hex = destination
         party.save()
 
@@ -1057,10 +1104,6 @@ def party_action(request, party_id: int, body: PartyActionSchema):
             map_obj.sub_tick = 0
         map_obj.save(update_fields=['sub_tick'])
         party_sub_tick = 0 if is_shift else map_obj.sub_tick
-    elif is_city:
-        # Movement on city maps costs speed but not a sub_tick — no shift fires
-        is_shift = False
-        party_sub_tick = map_obj.sub_tick
     else:
         is_shift = True
         party_sub_tick = 0
@@ -1149,10 +1192,14 @@ def patch_party(request, party_id: int, body: PartyPatchSchema):
         party.current_action = body.current_action or None
         fields.append('current_action')
     if body.current_hex is not None:
-        party.current_hex = get_object_or_404(Hex, id=body.current_hex)
+        destination = get_object_or_404(Hex, id=body.current_hex)
+        party.current_hex = destination
         fields.append('current_hex')
+        Hex.objects.filter(id=destination.id).update(player_explored=True)
     if fields:
         party.save(update_fields=fields)
+        map_id = party.map_id
+        transaction.on_commit(lambda: _redis.publish(_sse_channel(map_id), json.dumps({"type": "map_update"})))
     return party
 
 

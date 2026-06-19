@@ -3,7 +3,6 @@ import type { TickRequest, TickResponse, PartyActionRequest, PartyActionResponse
 
 export interface HexTickState {
   hex_id: number;
-  terrain_type: string;
   resources: number;
   weather: string;
   encounter_likelihood: number;

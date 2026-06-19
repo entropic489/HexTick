@@ -23,15 +23,18 @@ interface Props {
   selectedHexId: number | null;
   selectedHexIds?: Set<number>;
   factionAllowedHexIds?: Set<number>;
+  randomHexId?: number | null;
   fogOfWar: boolean;
   partyHexId: number | null;
   focusHex?: Hex | null;
+  focusHexIds?: number[];
+  highlightedHexId?: number | null;
   onHexClick: (hexId: number) => void;
 }
 
 const MAX_SCALE = 8;
 
-export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, factionAllowedHexIds, fogOfWar, partyHexId, focusHex, onHexClick }: Props) {
+export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, factionAllowedHexIds, randomHexId, fogOfWar, partyHexId, focusHex, focusHexIds, highlightedHexId, onHexClick }: Props) {
   const factionsByHex = useMemo(() => {
     const m = new Map<number, Faction[]>();
     for (const f of factions) {
@@ -79,6 +82,26 @@ export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fa
     focusApplied.current = true;
   }
 
+  function zoomToFitHexList(targets: Hex[], cw: number, ch: number) {
+    if (targets.length === 0) return;
+    const points = targets.map((h) => hexToPixel(h.row, h.col, map.hex_size, map.origin_x, map.origin_y));
+    const minX = Math.min(...points.map(([x]) => x)) - map.hex_size;
+    const maxX = Math.max(...points.map(([x]) => x)) + map.hex_size;
+    const minY = Math.min(...points.map(([, y]) => y)) - map.hex_size;
+    const maxY = Math.max(...points.map(([, y]) => y)) + map.hex_size;
+    const sceneW = maxX - minX;
+    const sceneH = maxY - minY;
+    const targetScale = Math.min(MAX_SCALE, Math.min(cw / sceneW, ch / sceneH) * 0.75);
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    transform.current = {
+      scale: targetScale,
+      x: cw / 2 - cx * targetScale,
+      y: ch / 2 - cy * targetScale,
+    };
+    applyTransform();
+  }
+
   function fitToContainer(cw: number, ch: number) {
     const fitScale = Math.min(cw / svgWidth, ch / svgHeight);
     minScale.current = fitScale;
@@ -109,6 +132,21 @@ export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fa
     zoomToHex(focusHex, el.clientWidth, el.clientHeight);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusHex]);
+
+  // Zoom to show all focusHexIds whenever the list changes.
+  useEffect(() => {
+    if (!focusHexIds || focusHexIds.length === 0 || !fitted.current) return;
+    const el = containerRef.current;
+    if (!el || el.clientWidth === 0) return;
+    const targets = focusHexIds.map((id) => hexes.find((h) => h.id === id)).filter(Boolean) as Hex[];
+    if (targets.length === 0) return;
+    if (targets.length === 1) {
+      zoomToHex(targets[0], el.clientWidth, el.clientHeight);
+    } else {
+      zoomToFitHexList(targets, el.clientWidth, el.clientHeight);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusHexIds]);
 
   // ResizeObserver for first render when container has no size yet.
   useEffect(() => {
@@ -220,6 +258,7 @@ export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fa
             selected={hex.id === selectedHexId}
             multiSelected={selectedHexIds?.has(hex.id) ?? false}
             factionAllowed={factionAllowedHexIds?.has(hex.id) ?? false}
+            randomHighlight={hex.id === randomHexId}
             fogOfWar={fogOfWar}
             onClick={onHexClick}
           />
@@ -343,7 +382,6 @@ export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fa
           const hex = hexes.find((h) => h.id === partyHexId);
           console.log('crown hex lookup', partyHexId, hex, hexes.length);
           if (!hex) return null;
-          if (fogOfWar && !hex.player_explored) return null;
           const [cx, cy] = hexToPixel(hex.row, hex.col, map.hex_size, map.origin_x, map.origin_y);
           const s = map.hex_size * 0.35;
           const path = `
@@ -359,6 +397,24 @@ export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fa
           return (
             <g style={{ pointerEvents: 'none' }}>
               <path d={path} fill="#facc15" stroke="#92400e" strokeWidth={s * 0.12} strokeLinejoin="round" />
+            </g>
+          );
+        })()}
+        {/* GM hex highlight ring */}
+        {(() => {
+          if (highlightedHexId == null) return null;
+          const hex = hexes.find((h) => h.id === highlightedHexId);
+          if (!hex) return null;
+          const [cx, cy] = hexToPixel(hex.row, hex.col, map.hex_size, map.origin_x, map.origin_y);
+          const r = map.hex_size * 0.72;
+          const strokeW = map.hex_size * 0.12;
+          return (
+            <g
+              className={styles.highlightRing}
+              style={{ '--pulse-base': `${strokeW}px` } as React.CSSProperties}
+            >
+              <circle cx={cx} cy={cy} r={r} fill="none" stroke="#f38ba8" strokeWidth={strokeW} />
+              <circle cx={cx} cy={cy} r={r * 1.35} fill="none" stroke="#f38ba8" strokeWidth={strokeW * 0.4} opacity={0.5} />
             </g>
           );
         })()}

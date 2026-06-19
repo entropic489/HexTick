@@ -30,10 +30,7 @@ class DiseaseType(models.TextChoices):
 
 class Faction(models.Model):
     name = models.CharField(max_length=200)
-    leader = models.ForeignKey(
-        'world.Character', null=True, blank=True,
-        on_delete=models.SET_NULL, related_name='led_factions',
-    )
+    leader = models.CharField(max_length=200, blank=True, default='')
 
     color = models.CharField(max_length=7, default='#89b4fa')
 

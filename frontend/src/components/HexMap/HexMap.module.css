@@ -13,3 +13,14 @@
 .svg {
   display: block;
 }
+
+@keyframes hexPulse {
+  0%   { opacity: 1;   stroke-width: var(--pulse-base); }
+  50%  { opacity: 0.4; stroke-width: calc(var(--pulse-base) * 2.5); }
+  100% { opacity: 1;   stroke-width: var(--pulse-base); }
+}
+
+.highlightRing {
+  pointer-events: none;
+  animation: hexPulse 1.2s ease-in-out infinite;
+}

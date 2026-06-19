@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { getMap, getHexes, getFactions, getParty } from '../../api/maps';
@@ -20,6 +20,7 @@ export function PlayerPage() {
 
   const selectedHexId = useGameStore((s) => s.selectedHexId);
   const setSelectedHexId = useGameStore((s) => s.setSelectedHexId);
+  const highlightedHexId = useGameStore((s) => s.highlightedHexId);
 
   const [actionModalOpen, setActionModalOpen] = useState(false);
 
@@ -31,6 +32,15 @@ export function PlayerPage() {
   const { data: party } = useQuery({ queryKey: ['party', id], queryFn: () => getParty(id) });
   const { data: tickData } = useQuery({ queryKey: ['currentTick', id], queryFn: () => getCurrentTick(id) });
   const { data: gallery = [] } = useQuery({ queryKey: ['gallery', id], queryFn: () => getGallery(id) });
+
+  const focusHexIds = useMemo(() => {
+    if (highlightedHexId != null) {
+      return [highlightedHexId, ...(party?.current_hex != null ? [party.current_hex] : [])].filter(
+        (v, i, a) => a.indexOf(v) === i
+      );
+    }
+    return party?.current_hex != null ? [party.current_hex] : undefined;
+  }, [highlightedHexId, party?.current_hex]);
 
   const publishedImage = gallery.find((img) => img.is_published) ?? null;
   const playerFaction = factions.find((f) => f.is_player_faction) ?? null;
@@ -88,6 +98,8 @@ export function PlayerPage() {
             fogOfWar={map.fog_of_war}
             partyHexId={party?.current_hex ?? null}
             focusHex={party?.current_hex != null ? (hexes.find((h) => h.id === party.current_hex) ?? null) : null}
+            highlightedHexId={highlightedHexId}
+            focusHexIds={focusHexIds}
             onHexClick={setSelectedHexId}
           />
         </div>

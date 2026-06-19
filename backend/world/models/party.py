@@ -15,8 +15,6 @@ class Party(models.Model):
         'world.Faction', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='party',
     )
-    characters = models.ManyToManyField('world.Character', blank=True, related_name='parties')
-
     player_count = models.IntegerField(default=1)
     speed = models.IntegerField(default=0)
     max_speed = models.IntegerField(default=4)

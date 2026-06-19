@@ -124,6 +124,16 @@
   background: rgba(166, 227, 161, 0.1);
 }
 
+.permanentUnlock {
+  background: none;
+  border-color: #f9e2af;
+  color: #f9e2af;
+}
+
+.permanentUnlock:hover {
+  background: rgba(249, 226, 175, 0.1);
+}
+
 .unpublishBtn {
   padding: 0.3rem 0.75rem;
   background: #f38ba8;

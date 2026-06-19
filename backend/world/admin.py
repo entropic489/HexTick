@@ -6,7 +6,7 @@ from .utils import adjacent_hexes
 from .models import (
     Map, Hex, PointOfInterest,
     Faction, ActiveDisease,
-    Item, Knowledge, Character, CharacterTick,
+    Knowledge,
     Tick, HexTick, FactionTick,
     WorldSettings,
     Party,
@@ -179,7 +179,7 @@ class PointOfInterestAdmin(admin.ModelAdmin):
             'fields': ('difficulty', 'description', 'notes', 'technology_max_modifier'),
         }),
         ('Relations', {
-            'fields': ('faction', 'monster_type', 'items', 'knowledge'),
+            'fields': ('faction', 'monster_type', 'knowledge'),
         }),
     )
 
@@ -193,7 +193,7 @@ class TickAdmin(admin.ModelAdmin):
 class HexTickInline(admin.TabularInline):
     model = HexTick
     extra = 0
-    readonly_fields = ('hex', 'terrain_type', 'resources', 'weather', 'encounter_likelihood', 'player_explored', 'player_visible')
+    readonly_fields = ('hex', 'resources', 'weather', 'encounter_likelihood', 'player_explored', 'player_visible')
     can_delete = False
 
 
@@ -208,8 +208,7 @@ class FactionTickInline(admin.TabularInline):
 class HexTickAdmin(admin.ModelAdmin):
     list_display = ('tick', 'hex', 'resources', 'weather')
     list_filter = ('tick',)
-    readonly_fields = ('tick', 'hex', 'terrain_type', 'resources',
-                       'weather', 'encounter_likelihood', 'player_explored', 'player_visible')
+    readonly_fields = ('tick', 'hex', 'resources', 'weather', 'encounter_likelihood', 'player_explored', 'player_visible')
 
 
 @admin.register(FactionTick)
@@ -222,49 +221,11 @@ class FactionTickAdmin(admin.ModelAdmin):
                        'action', 'dice_roll')
 
 
-@admin.register(Item)
-class ItemAdmin(admin.ModelAdmin):
-    list_display = ('title',)
-    search_fields = ('title',)
-
-
 @admin.register(Knowledge)
 class KnowledgeAdmin(admin.ModelAdmin):
     list_display = ('title', 'do_players_know')
     list_filter = ('do_players_know',)
     search_fields = ('title',)
-
-
-class CharacterTickInline(admin.TabularInline):
-    model = CharacterTick
-    extra = 0
-    readonly_fields = ('tick', 'rations', 'famine_streak', 'speed', 'is_dead',
-                       'is_wanderer', 'destination', 'current_hex', 'action', 'notes')
-    can_delete = False
-
-
-@admin.register(Character)
-class CharacterAdmin(admin.ModelAdmin):
-    list_display = ('name', 'faction', 'is_player', 'is_wanderer', 'is_dead', 'current_hex')
-    list_filter = ('is_player', 'is_wanderer', 'is_dead', 'can_merge')
-    search_fields = ('name',)
-    readonly_fields = ('is_dead', 'famine_streak')
-    fieldsets = (
-        (None, {
-            'fields': ('name', 'age', 'faction', 'current_hex', 'destination'),
-        }),
-        ('Flags', {
-            'fields': ('is_player', 'is_leader', 'is_wanderer', 'is_dead', 'can_merge'),
-        }),
-        ('Stats', {
-            'fields': ('combat_skill', 'speed', 'max_speed', 'scouting',
-                       'resource_generation', 'rations', 'ration_limit', 'famine_streak'),
-        }),
-        ('GM Notes', {
-            'fields': ('notes', 'drive', 'items', 'knowledge'),
-        }),
-    )
-    inlines = [CharacterTickInline]
 
 
 class PartyAdminForm(forms.ModelForm):
@@ -320,7 +281,7 @@ class PartyAdmin(admin.ModelAdmin):
     list_display = ('name', 'map', 'current_hex', 'current_action', 'last_action')
     fieldsets = (
         (None, {
-            'fields': ('name', 'map', 'faction', 'characters'),
+            'fields': ('name', 'map', 'faction'),
         }),
         ('Stats', {
             'fields': ('speed', 'max_speed', 'resource_generation'),
@@ -338,10 +299,3 @@ class PartyAdmin(admin.ModelAdmin):
         obj.destination = form.cleaned_data['_destination']
         super().save_model(request, obj, form, change)
 
-
-@admin.register(CharacterTick)
-class CharacterTickAdmin(admin.ModelAdmin):
-    list_display = ('tick', 'character', 'action', 'rations', 'is_dead')
-    list_filter = ('tick', 'action', 'is_dead')
-    readonly_fields = ('tick', 'character', 'rations', 'famine_streak', 'speed',
-                       'is_dead', 'is_wanderer', 'destination', 'current_hex', 'action', 'notes')

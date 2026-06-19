@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getMap, getHexes, getFactions, getParty, patchMapLocked } from '../../api/maps';
+import { getMap, getHexes, getFactions, getParty, patchMapLocked, postHighlightHex } from '../../api/maps';
 import { getGallery, publishGalleryImage } from '../../api/gallery';
 import { getCurrentTick, getTickState } from '../../api/tick';
 import { HexMap } from '../../components/HexMap/HexMap';
@@ -14,12 +14,16 @@ import { ShiftActionsIndicator } from '../../components/ShiftActionsIndicator/Sh
 import { useGameStore } from '../../store/useGameStore';
 import { useTickStream } from '../../hooks/useTickStream';
 import { NPCModal } from '../../components/NPCModal/NPCModal';
+import { MonsterModal } from '../../components/MonsterModal/MonsterModal';
 import styles from './GMPage.module.css';
 
 export function GMPage() {
   const { mapId } = useParams<{ mapId: string }>();
   const id = Number(mapId);
   const [npcOpen, setNpcOpen] = useState(false);
+  const [monsterOpen, setMonsterOpen] = useState(false);
+  const [randomHexId, setRandomHexId] = useState<number | null>(null);
+  const [permanentUnlock, setPermanentUnlock] = useState(false);
 
 
   const setSelectedMapId = useGameStore((s) => s.setSelectedMapId);
@@ -35,6 +39,7 @@ export function GMPage() {
   const factionHexSelectMode = useGameStore((s) => s.factionHexSelectMode);
   const factionAllowedHexIds = useGameStore((s) => s.factionAllowedHexIds);
   const toggleFactionAllowedHex = useGameStore((s) => s.toggleFactionAllowedHex);
+  const highlightedHexId = useGameStore((s) => s.highlightedHexId);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -43,12 +48,25 @@ export function GMPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['map', id] }),
   });
 
-  // keep store in sync if user navigates directly via URL
+  const setHighlightedHexId = useGameStore((s) => s.setHighlightedHexId);
+  const clearHighlightMutation = useMutation({
+    mutationFn: () => postHighlightHex(id, null),
+    onSuccess: () => setHighlightedHexId(null),
+  });
+
+// keep store in sync if user navigates directly via URL
   if (useGameStore.getState().selectedMapId !== id) setSelectedMapId(id);
 
   useTickStream(id);
 
   const { data: map } = useQuery({ queryKey: ['map', id], queryFn: () => getMap(id) });
+
+  useEffect(() => {
+    if (permanentUnlock && map?.player_actions_locked) {
+      lockMutation.mutate(false);
+    }
+  }, [map?.player_actions_locked, permanentUnlock]);
+
   const { data: hexes = [] } = useQuery({ queryKey: ['hexes', id], queryFn: () => getHexes(id) });
   const { data: factions = [] } = useQuery({ queryKey: ['factions', id], queryFn: () => getFactions(id) });
   const { data: party } = useQuery({ queryKey: ['party', id], queryFn: () => getParty(id) });
@@ -65,7 +83,7 @@ export function GMPage() {
     ? hexes.map((h) => {
         const snap = historicalState.hex_ticks.find((ht) => ht.hex_id === h.id);
         if (!snap) return h;
-        return { ...h, terrain_type: snap.terrain_type as typeof h.terrain_type, resources: snap.resources, weather: snap.weather as typeof h.weather, encounter_likelihood: snap.encounter_likelihood, player_explored: snap.player_explored, player_visible: snap.player_visible };
+        return { ...h, resources: snap.resources, weather: snap.weather as typeof h.weather, encounter_likelihood: snap.encounter_likelihood, player_explored: snap.player_explored, player_visible: snap.player_visible };
       })
     : hexes;
 
@@ -100,17 +118,35 @@ export function GMPage() {
       <header className={styles.header}>
         {tickData && <TimeOfDayBadge tickNumber={tickData.tick_number} />}
         <button
-          className={`${styles.lockBtn} ${map.player_actions_locked ? styles.locked : styles.unlocked}`}
-          onClick={() => lockMutation.mutate(!map.player_actions_locked)}
-          title={map.player_actions_locked ? 'Unlock player actions' : 'Lock player actions'}
+          className={`${styles.lockBtn} ${map.player_actions_locked ? styles.locked : permanentUnlock ? styles.permanentUnlock : styles.unlocked}`}
+          onClick={() => {
+            if (map.player_actions_locked) {
+              lockMutation.mutate(false);
+            } else if (permanentUnlock) {
+              setPermanentUnlock(false);
+              lockMutation.mutate(true);
+            } else {
+              setPermanentUnlock(true);
+            }
+          }}
+          title={map.player_actions_locked ? 'Unlock player actions' : permanentUnlock ? 'Disable permanent unlock (lock)' : 'Enable permanent unlock'}
         >
           {map.player_actions_locked ? (
+            // closed lock — red
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
               <rect x="3" y="7" width="10" height="8" rx="1.5" fill="currentColor" opacity="0.9"/>
               <path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
               <circle cx="8" cy="11" r="1.2" fill="#1e1e2e"/>
             </svg>
+          ) : permanentUnlock ? (
+            // open lock with small infinity mark — yellow
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="3" y="7" width="10" height="8" rx="1.5" fill="currentColor" opacity="0.6"/>
+              <path d="M5 7V5a3 3 0 0 1 6 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+              <text x="8" y="13" textAnchor="middle" fontSize="5" fill="#1e1e2e" fontWeight="bold">∞</text>
+            </svg>
           ) : (
+            // open lock — green
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
               <rect x="3" y="7" width="10" height="8" rx="1.5" fill="currentColor" opacity="0.6"/>
               <path d="M5 7V5a3 3 0 0 1 6 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
@@ -134,6 +170,15 @@ export function GMPage() {
             {multiSelectMode && selectedHexIds.size > 0
               ? `Multi (${selectedHexIds.size})`
               : 'Multi'}
+          </button>
+        )}
+{highlightedHexId != null && (
+          <button
+            className={styles.unpublishBtn}
+            onClick={() => clearHighlightMutation.mutate()}
+            disabled={clearHighlightMutation.isPending}
+          >
+            Clear highlight
           </button>
         )}
         {publishedImage && (
@@ -165,16 +210,32 @@ export function GMPage() {
         </button>
         <button
           className={styles.addFactionBtn}
-          onClick={() => navigate(`/map/${id}/characters`)}
-        >
-          Characters
-        </button>
-        <button
-          className={styles.addFactionBtn}
           onClick={() => setNpcOpen(true)}
         >
           NPC
         </button>
+        <button
+          className={styles.addFactionBtn}
+          onClick={() => setMonsterOpen(true)}
+        >
+          Monster
+        </button>
+        <button
+          className={styles.addFactionBtn}
+          onClick={() => {
+            const eligible = hexes.filter((h) => h.terrain_type !== 'ocean');
+            if (eligible.length === 0) return;
+            const pick = eligible[Math.floor(Math.random() * eligible.length)];
+            setRandomHexId(pick.id);
+          }}
+        >
+          Random Hex
+        </button>
+        {randomHexId !== null && (
+          <button className={styles.addFactionBtn} onClick={() => setRandomHexId(null)}>
+            Clear
+          </button>
+        )}
         <button
           className={styles.popout}
           onClick={() => window.open(`/map/${id}/player`, '_blank', 'width=1024,height=768')}
@@ -183,6 +244,7 @@ export function GMPage() {
         </button>
       </header>
       {npcOpen && <NPCModal onClose={() => setNpcOpen(false)} />}
+      {monsterOpen && <MonsterModal onClose={() => setMonsterOpen(false)} />}
 
       <div className={styles.body}>
         <div className={styles.mapArea}>
@@ -193,8 +255,10 @@ export function GMPage() {
             selectedHexId={multiSelectMode ? null : selectedHexId}
             selectedHexIds={multiSelectMode ? selectedHexIds : undefined}
             factionAllowedHexIds={factionHexSelectMode ? factionAllowedHexIds : undefined}
+            randomHexId={randomHexId}
             fogOfWar={false}
             partyHexId={partyHexId}
+            highlightedHexId={highlightedHexId}
             onHexClick={
               multiSelectMode ? toggleSelectedHex
               : factionHexSelectMode ? toggleFactionAllowedHex

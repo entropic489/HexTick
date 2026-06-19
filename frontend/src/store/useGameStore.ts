@@ -30,6 +30,9 @@ interface GameStore {
   setFactionHexSelectMode: (active: boolean, initialIds?: Set<number>) => void;
   toggleFactionAllowedHex: (id: number) => void;
   clearFactionHexSelect: () => void;
+
+  highlightedHexId: number | null;
+  setHighlightedHexId: (id: number | null) => void;
 }
 
 export const useGameStore = create<GameStore>((set) => ({
@@ -74,4 +77,7 @@ export const useGameStore = create<GameStore>((set) => ({
       return { factionAllowedHexIds: next };
     }),
   clearFactionHexSelect: () => set({ factionHexSelectMode: false, factionAllowedHexIds: new Set() }),
+
+  highlightedHexId: null,
+  setHighlightedHexId: (id) => set({ highlightedHexId: id }),
 }));

@@ -2,12 +2,13 @@ import { useState, useEffect, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import type { Hex, Faction, Party, Map, TerrainType, WeatherType, ActionType } from '../../types';
-import { patchHex, patchFaction } from '../../api/maps';
+import { patchHex, patchFaction, postHighlightHex } from '../../api/maps';
 import { useGameStore } from '../../store/useGameStore';
 import { patchParty } from '../../api/tick';
 import { getGallery, publishGalleryImage } from '../../api/gallery';
 import { AddPOIModal } from '../AddPOIModal/AddPOIModal';
 import { AddFactionModal } from '../AddFactionModal/AddFactionModal';
+import { ActionModal } from '../ActionModal/ActionModal';
 import styles from './HexPanel.module.css';
 
 const TERRAIN_TYPES: TerrainType[] = ['plains', 'forest', 'mountain', 'swamp', 'desert', 'coast', 'ocean', 'city'];
@@ -102,6 +103,8 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
   const factionAllowedHexIds = useGameStore((s) => s.factionAllowedHexIds);
   const setFactionHexSelectMode = useGameStore((s) => s.setFactionHexSelectMode);
   const clearFactionHexSelect = useGameStore((s) => s.clearFactionHexSelect);
+  const highlightedHexId = useGameStore((s) => s.highlightedHexId);
+  const setHighlightedHexId = useGameStore((s) => s.setHighlightedHexId);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditState | null>(null);
   const [addingPOI, setAddingPOI] = useState(false);
@@ -111,6 +114,7 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
   const [editingFactionId, setEditingFactionId] = useState<number | null>(null);
   const [factionDraft, setFactionDraft] = useState<FactionEditState | null>(null);
   const [interactFaction, setInteractFaction] = useState<Faction | null>(null);
+  const [gmActionModalOpen, setGmActionModalOpen] = useState(false);
   const [partyEditing, setPartyEditing] = useState(false);
   const [partyDraft, setPartyDraft] = useState<{
     player_count: number;
@@ -127,6 +131,11 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['party'] });
     },
+  });
+
+  const highlightMutation = useMutation({
+    mutationFn: (hexId: number | null) => postHighlightHex(map!.id, hexId),
+    onSuccess: (_, hexId) => setHighlightedHexId(hexId),
   });
 
   const partyMutation = useMutation({
@@ -670,7 +679,7 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
         </>
       )}
       </div>
-      {gmMode && hex && party && hex.id !== party.current_hex && (
+      {gmMode && hex && map && (
         <div className={styles.movePartyRow}>
           {movePartyMutation.isError && (
             <span className={styles.error}>
@@ -678,12 +687,29 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
             </span>
           )}
           <button
-            className={styles.movePartyBtn}
-            disabled={movePartyMutation.isPending}
-            onClick={() => movePartyMutation.mutate()}
+            className={styles.highlightBtn}
+            disabled={highlightMutation.isPending}
+            onClick={() => highlightMutation.mutate(highlightedHexId === hex.id ? null : hex.id)}
           >
-            {movePartyMutation.isPending ? 'Moving…' : 'Move party here'}
+            {highlightedHexId === hex.id ? 'Clear highlight' : 'Highlight for players'}
           </button>
+          {party && mapId != null && (
+            <button
+              className={styles.movePartyBtn}
+              onClick={() => setGmActionModalOpen(true)}
+            >
+              Actions…
+            </button>
+          )}
+          {party && hex.id !== party.current_hex && (
+            <button
+              className={styles.movePartyBtn}
+              disabled={movePartyMutation.isPending}
+              onClick={() => movePartyMutation.mutate()}
+            >
+              {movePartyMutation.isPending ? 'Moving…' : 'Move party here'}
+            </button>
+          )}
         </div>
       )}
       {!gmMode && party && partyHexFactions.length > 0 && (
@@ -706,6 +732,16 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
 
       {interactFaction && (
         <InteractModal faction={interactFaction} onClose={() => setInteractFaction(null)} />
+      )}
+
+      {gmActionModalOpen && party && hex && mapId != null && (
+        <ActionModal
+          party={party}
+          selectedHex={hex}
+          mapId={mapId}
+          onSuccess={() => setGmActionModalOpen(false)}
+          onClose={() => setGmActionModalOpen(false)}
+        />
       )}
 
       {party && (

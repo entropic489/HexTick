@@ -78,7 +78,7 @@ export interface PatchFactionParams {
   next_action?: ActionType | null;
   notes?: string;
   knowledge?: number[];
-  leader?: number | null;
+  leader?: string;
   image?: number | null;
   movement_restricted?: boolean;
   allowed_hexes?: number[];
@@ -89,6 +89,9 @@ export const patchFaction = (factionId: number, params: PatchFactionParams) =>
 
 export const patchMapLocked = (mapId: number, locked: boolean) =>
   api.patch<Map>(`/maps/${mapId}/locked/`, { locked });
+
+export const postHighlightHex = (mapId: number, hexId: number | null) =>
+  api.post<{ hex_id: number | null }>(`/maps/${mapId}/highlight/`, { hex_id: hexId });
 
 export const getMaps = () => api.get<Map[]>('/maps/');
 export const getMap = (id: number) => api.get<Map>(`/maps/${id}/`);
@@ -117,56 +120,10 @@ export const createKnowledge = (mapId: number, params: CreateKnowledgeParams) =>
 export const patchKnowledge = (id: number, params: PatchKnowledgeParams) =>
   api.patch<Knowledge>(`/knowledge/${id}/`, params);
 
-export interface CreateCharacterParams {
-  name: string;
-  age?: number | null;
-  faction?: number | null;
-  is_player?: boolean;
-  is_leader?: boolean;
-  is_wanderer?: boolean;
-  can_merge?: boolean;
-  combat_skill?: number;
-  speed?: number;
-  max_speed?: number;
-  scouting?: number;
-  resource_generation?: number;
-  ration_limit?: number;
-  rations?: number;
-  current_hex?: number | null;
-  notes?: string;
-  drive?: string;
-  knowledge?: number[];
-}
-
-export interface PatchCharacterParams {
-  name?: string;
-  age?: number | null;
-  faction?: number | null;
-  is_player?: boolean;
-  is_leader?: boolean;
-  is_wanderer?: boolean;
-  is_dead?: boolean;
-  can_merge?: boolean;
-  combat_skill?: number;
-  speed?: number;
-  max_speed?: number;
-  scouting?: number;
-  resource_generation?: number;
-  ration_limit?: number;
-  rations?: number;
-  current_hex?: number | null;
-  destination?: number | null;
-  notes?: string;
-  drive?: string;
-  knowledge?: number[];
-}
-
 export const getParty = (mapId: number) => api.get<Party>(`/maps/${mapId}/party/`);
-export const getCharacters = (mapId: number) => api.get<import('../types').Character[]>(`/maps/${mapId}/characters/`);
-export const createCharacter = (mapId: number, params: CreateCharacterParams) =>
-  api.post<import('../types').Character>(`/maps/${mapId}/characters/`, params);
-export const patchCharacter = (id: number, params: PatchCharacterParams) =>
-  api.patch<import('../types').Character>(`/characters/${id}/`, params);
+
+export const duplicateMap = (mapId: number, name: string) =>
+  api.post<Map>(`/maps/${mapId}/duplicate/`, { name });
 
 export interface CreateMapParams {
   name: string;

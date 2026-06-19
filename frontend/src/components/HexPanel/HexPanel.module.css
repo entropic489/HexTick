@@ -282,6 +282,19 @@ h3 {
 
 .movePartyBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.highlightBtn {
+  padding: 0.3rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border: 1px solid #f38ba8;
+  background: none;
+  color: #f38ba8;
+}
+
+.highlightBtn:hover { border-color: #fab387; color: #fab387; }
+.highlightBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .addPoiBtn {
   padding: 0.3rem 0.75rem;
   border-radius: 4px;

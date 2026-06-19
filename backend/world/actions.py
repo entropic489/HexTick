@@ -1,7 +1,6 @@
 import random
 from dataclasses import dataclass
 
-from .models.characters import Character, CharacterTick
 from .models.faction import Faction, Action, DiseaseType, ActiveDisease
 from .models.hex import Hex
 from .models.party import Party
@@ -187,62 +186,6 @@ def tick_faction(
     )
 
 
-# --- Character ---
-
-def _character_select_action(
-    character: Character,
-    factions_on_hex: list[Faction],
-    tick_number: int,
-) -> tuple[str, str]:
-    """Returns (action_label, notes)."""
-    if character.destination:
-        return _character_travel(character, tick_number)
-
-    if character.rations < character.ration_limit // 2:
-        return _character_supply(character)
-
-    if not character.is_scout and character.can_merge:
-        target = next(
-            (
-                f for f in factions_on_hex
-                if f.agreeableness > 50
-                and f.resources > f.population
-                and (character.faction.agreeableness if character.faction else 0) + f.agreeableness > 100
-            ),
-            None,
-        )
-        if target:
-            return _character_merge(character, target)
-
-    return 'idle', ''
-
-
-def _character_travel(character: Character, tick_number: int) -> tuple[str, str]:
-    cost = move_difficulty(character.current_hex, character.destination, tick_number)
-    character.speed -= cost
-    character.current_hex = character.destination
-    if character.current_hex == character.destination:
-        character.destination = None
-    character.save()
-    return Action.TRAVEL, f"moved to {character.current_hex}"
-
-
-def _character_supply(character: Character) -> tuple[str, str]:
-    gained = character.resource_generation
-    character.rations = min(character.rations + gained, character.ration_limit)
-    character.save()
-    return Action.SUPPLY, f"+{gained} rations"
-
-
-def _character_merge(character: Character, target: Faction) -> tuple[str, str]:
-    old_faction = character.faction
-    character.faction = target
-    target.population += 1
-    target.save()
-    character.save()
-    return Action.MERGE, f"joined {target} (left {old_faction})"
-
-
 def reveal_hex_on_move(destination: Hex, all_map_hexes: list[Hex]) -> None:
     from world.utils import adjacent_hexes
     adjacent_ids = {h.id for h in adjacent_hexes(destination, all_map_hexes)}
@@ -253,55 +196,6 @@ def reveal_hex_on_move(destination: Hex, all_map_hexes: list[Hex]) -> None:
 
 def reveal_pois_on_search(hex: Hex) -> None:
     hex.pois.filter(hidden=False).update(player_visible=True)
-
-
-def update_character_visibility(character: Character, all_hexes: list[Hex]) -> None:
-    """Mark hexes visible based on character scouting. No-op if scouting == 0."""
-    if not character.scouting or not character.current_hex:
-        return
-    depth = modifier(character.scouting)
-    for hex in all_hexes:
-        if hex_distance(character.current_hex, hex) <= depth:
-            if not hex.player_explored:
-                hex.player_explored = True
-                hex.save()
-
-
-def tick_character(
-    character: Character,
-    tick: Tick,
-    factions_on_hex: list[Faction],
-) -> CharacterTick:
-    action = None
-    notes = ''
-
-    if not character.is_dead and character.is_wanderer:
-        action, notes = _character_select_action(character, factions_on_hex, tick.number)
-
-    if tick.number % 3 == 0:
-        character.speed = character.max_speed
-        character.rations = max(0, character.rations - 1)
-        if character.rations == 0:
-            character.famine_streak += 1
-        else:
-            character.famine_streak = 0
-        if character.famine_streak >= 5:
-            character.is_dead = True
-        character.save()
-
-    return CharacterTick.objects.create(
-        tick=tick,
-        character=character,
-        rations=character.rations,
-        famine_streak=character.famine_streak,
-        speed=character.speed,
-        is_dead=character.is_dead,
-        is_wanderer=character.is_wanderer,
-        destination=character.destination,
-        current_hex=character.current_hex,
-        action=action,
-        notes=notes,
-    )
 
 
 # --- Party ---
@@ -321,7 +215,6 @@ def tick_hex(hex: Hex, tick: Tick) -> HexTick:
     return HexTick.objects.create(
         tick=tick,
         hex=hex,
-        terrain_type=hex.terrain_type,
         resources=hex.resources,
         weather=hex.weather,
         encounter_likelihood=hex.encounter_likelihood,

@@ -76,7 +76,7 @@ export interface Faction {
   next_action: ActionType | null;
   notes: string;
   knowledge: number[];
-  leader: number | null;
+  leader: string;
   image: number | null;
   movement_restricted: boolean;
   allowed_hexes: number[];
@@ -96,37 +96,11 @@ export interface Knowledge {
   related_knowledge: KnowledgeRef[];
 }
 
-export interface Character {
-  id: number;
-  name: string;
-  age: number | null;
-  faction: number | null;
-  is_player: boolean;
-  is_leader: boolean;
-  is_wanderer: boolean;
-  is_dead: boolean;
-  can_merge: boolean;
-  combat_skill: number;
-  speed: number;
-  max_speed: number;
-  scouting: number;
-  resource_generation: number;
-  ration_limit: number;
-  rations: number;
-  famine_streak: number;
-  current_hex: number | null;
-  destination: number | null;
-  notes: string;
-  drive: string;
-  knowledge: number[];
-}
-
 export interface Party {
   id: number;
   name: string;
   map: number | null;
   faction: number | null;
-  characters: number[];
   player_count: number;
   speed: number;
   max_speed: number;

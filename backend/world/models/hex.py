@@ -152,8 +152,6 @@ class PointOfInterest(models.Model):
     player_explored = models.BooleanField(default=False)
     hidden = models.BooleanField(default=False)
 
-    # Dungeon / Ruin / Stash
-    items = models.ManyToManyField('world.Item', blank=True)
     knowledge = models.ManyToManyField('world.Knowledge', blank=True)
 
     def __str__(self):

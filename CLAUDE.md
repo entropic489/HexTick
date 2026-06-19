@@ -242,6 +242,10 @@ The `KnowledgePage` is a GM-only view (linked from the GMPage header). No player
 
 **`Map.player_actions_locked`** — BooleanField toggled via `PATCH /api/maps/{map_id}/locked/`. When true, the "Actions…" button on `PlayerPage` is disabled. The lock endpoint publishes to the SSE channel (`tick:{map_id}`) after saving so the player view updates immediately without a tick firing. `useTickStream` invalidates `['map', mapId]` on every SSE message for this reason.
 
+**Hex highlight** — `POST /api/maps/{map_id}/highlight/` with `{ hex_id: int | null }` broadcasts `type: "hex_highlight"` on the SSE channel. No DB backing — ephemeral only; state resets on page reload. `useTickStream` handles this event type by calling `setHighlightedHexId` in the Zustand store directly (no query invalidation). The GM sets/clears from `HexPanel` (per-hex) or the GMPage header "Clear highlight" button (always visible when active). `PlayerPage` zooms to show both the highlighted hex and the party hex when a highlight arrives, and back to the party hex when cleared.
+
+**`HexMap.focusHexIds`** — array of hex IDs to zoom to fit. Single-hex arrays use `zoomToHex` (same scale as page-load focus); multi-hex arrays use `zoomToFitHexList` (0.75× fit). This distinction is intentional — single-hex zoom should feel like the initial player load, not an extreme close-up.
+
 ---
 
 ## Gallery

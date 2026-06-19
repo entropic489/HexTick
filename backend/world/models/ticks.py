@@ -20,7 +20,6 @@ class HexTick(models.Model):
     tick = models.ForeignKey(Tick, on_delete=models.CASCADE, related_name='hex_ticks')
     hex = models.ForeignKey(Hex, on_delete=models.CASCADE, related_name='ticks')
 
-    terrain_type = models.CharField(max_length=20)
     resources = models.IntegerField()
     points_of_interest = models.ManyToManyField(PointOfInterest, blank=True)
     weather = models.CharField(max_length=20, choices=WeatherType.choices)
