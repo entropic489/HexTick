@@ -7,63 +7,106 @@ from .models.hex import Hex
 from .models.party import Party
 from .models.ticks import Tick, HexTick, FactionTick
 from .models.settings import WorldSettings
+from .models.world import Map, WeatherType
 from .utils import modifier, hex_distance, night_bonus, move_difficulty
 
 
 class WildernessEvent(StrEnum):
     ENCOUNTER = 'Encounter'
     SIGN = 'Sign'
-    ENVIRONMENT = 'Environment'
+    WEATHER = 'Weather'
     LOSS = 'Loss'
-    EXHAUSTION = 'Exhaustion'
     QUIET = 'Quiet'
 
 
 _WILDERNESS_TABLE = {
     1: WildernessEvent.ENCOUNTER,
     2: WildernessEvent.SIGN,
-    3: WildernessEvent.ENVIRONMENT,
+    3: WildernessEvent.WEATHER,
     4: WildernessEvent.LOSS,
-    5: WildernessEvent.EXHAUSTION,
-    6: WildernessEvent.QUIET,
+    5: WildernessEvent.QUIET,
 }
 
 
-def party_move_rolls(origin: Hex, destination: Hex) -> dict:
-    """Roll for lost (d6) and wilderness event (d6) on party movement.
+# Best to worst; a Weather event shifts the map along this scale.
+WEATHER_ORDER = [
+    WeatherType.FAIR,
+    WeatherType.OVERCAST,
+    WeatherType.INCLEMENT,
+    WeatherType.EXTREME,
+    WeatherType.CATASTROPHIC,
+]
+
+# d8: 1 worse by 2, 2 worse by 1, 3-5 no change, 6-7 better by 1, 8 better by 2.
+_WEATHER_SHIFT_TABLE = {1: 2, 2: 1, 3: 0, 4: 0, 5: 0, 6: -1, 7: -1, 8: -2}
+
+
+def _shift_weather(map: Map, weather_roll: int) -> tuple[str, str]:
+    """Apply a d8 weather-shift roll to map.weather, clamped to WEATHER_ORDER's range.
+
+    Returns (weather_before, weather_after).
+    """
+    weather_before = map.weather
+    current_index = WEATHER_ORDER.index(map.weather)
+    new_index = max(0, min(len(WEATHER_ORDER) - 1, current_index + _WEATHER_SHIFT_TABLE[weather_roll]))
+    map.weather = WEATHER_ORDER[new_index]
+    map.save(update_fields=['weather'])
+    return weather_before, map.weather
+
+
+def party_move_rolls(origin: Hex, destination: Hex, map: Map) -> dict:
+    """Roll for lost (d6) and wilderness event (d5) on party movement.
 
     Lost roll is skipped if both hexes have roads or both hexes have rivers.
+    A Weather event additionally rolls a d8 to shift map.weather.
     """
     skip_lost = (origin.has_roads and destination.has_roads) or (origin.has_rivers and destination.has_rivers)
     lost_roll = random.randint(1, 6)
     lost = False if skip_lost else (lost_roll == 6)
-    event_roll = random.randint(1, 6)
-    return {
+    event_roll = random.randint(1, 5)
+    wilderness_event = _WILDERNESS_TABLE[event_roll]
+    result = {
         'lost': lost,
         'lost_roll': lost_roll if not skip_lost else None,
-        'wilderness_event': _WILDERNESS_TABLE[event_roll].value,
+        'wilderness_event': wilderness_event.value,
         'event_roll': event_roll,
     }
+    if wilderness_event == WildernessEvent.WEATHER:
+        weather_roll = random.randint(1, 8)
+        weather_before, weather_after = _shift_weather(map, weather_roll)
+        result['weather_roll'] = weather_roll
+        result['weather_before'] = weather_before
+        result['weather_after'] = weather_after
+    return result
 
 
-# Rest treats Sign (2) and Exhaustion (5) as Quiet (6) — those outcomes are irrelevant while resting.
-_REST_ROLL_REMAP = {2: 6, 5: 6}
+# Rest treats Sign (2) as Quiet (5) — that outcome is irrelevant while resting.
+_REST_ROLL_REMAP = {2: 5}
 
 
-def party_wilderness_roll(action: str) -> dict:
-    """Roll a d6 wilderness event for supply or rest actions.
+def party_wilderness_roll(action: str, map: Map) -> dict:
+    """Roll a d5 wilderness event for supply or rest actions.
 
-    For rest, results 2 (Sign) and 5 (Exhaustion) are remapped to 6 (Quiet).
+    For rest, result 2 (Sign) is remapped to 5 (Quiet).
+    A Weather event additionally rolls a d8 to shift map.weather.
     Returns {event_roll, wilderness_event}; no lost roll.
     """
-    event_roll = random.randint(1, 6)
+    event_roll = random.randint(1, 5)
     effective_roll = _REST_ROLL_REMAP.get(event_roll, event_roll) if action == 'rest' else event_roll
-    return {
+    wilderness_event = _WILDERNESS_TABLE[effective_roll]
+    result = {
         'lost': None,
         'lost_roll': None,
-        'wilderness_event': _WILDERNESS_TABLE[effective_roll].value,
+        'wilderness_event': wilderness_event.value,
         'event_roll': event_roll,
     }
+    if wilderness_event == WildernessEvent.WEATHER:
+        weather_roll = random.randint(1, 8)
+        weather_before, weather_after = _shift_weather(map, weather_roll)
+        result['weather_roll'] = weather_roll
+        result['weather_before'] = weather_before
+        result['weather_after'] = weather_after
+    return result
 
 
 
@@ -184,7 +227,7 @@ def tick_faction(
     candidate_hexes: list[Hex],
     weather: str = 'fair',
 ) -> FactionTick:
-    if not faction.is_player_faction and not faction.is_gm_faction:
+    if not faction.is_gm_faction:
         result = _select_action(faction, nearby_factions, candidate_hexes, tick.number, weather)
         faction.last_action = faction.current_action
         faction.current_action = result.action

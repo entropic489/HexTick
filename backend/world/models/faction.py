@@ -35,7 +35,6 @@ class Faction(models.Model):
     color = models.CharField(max_length=7, default='#89b4fa')
 
     is_mobile = models.BooleanField(default=True)
-    is_player_faction = models.BooleanField(default=False)
     is_gm_faction = models.BooleanField(default=False)
 
     # Core 1–100 attributes

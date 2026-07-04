@@ -271,7 +271,6 @@ def duplicate_map(request, map_id: int, body: DuplicateMapSchema):
                 leader=f.leader,
                 color=f.color,
                 is_mobile=f.is_mobile,
-                is_player_faction=f.is_player_faction,
                 is_gm_faction=f.is_gm_faction,
                 speed=f.speed,
                 population=f.population,
@@ -327,7 +326,6 @@ def duplicate_map(request, map_id: int, body: DuplicateMapSchema):
             Party.objects.create(
                 name=p.name,
                 map=new_map,
-                faction_id=faction_map.get(p.faction_id) if p.faction_id else None,
                 player_count=p.player_count,
                 speed=p.speed,
                 max_speed=p.max_speed,
@@ -475,7 +473,6 @@ class FactionSchema(Schema):
     current_hex: Optional[int]
     destination: Optional[int]
     is_mobile: bool
-    is_player_faction: bool
     is_gm_faction: bool
     is_dead: bool
     is_famine: bool
@@ -505,10 +502,6 @@ class FactionSchema(Schema):
         return [k.id for k in obj.knowledge.all()]
 
     @staticmethod
-    def resolve_leader(obj):
-        return obj.leader_id
-
-    @staticmethod
     def resolve_image(obj):
         return obj.image_id
 
@@ -528,7 +521,6 @@ class FactionCreateSchema(Schema):
     current_hex: Optional[int] = None
     destination: Optional[int] = None
     is_mobile: bool = True
-    is_player_faction: bool = False
     is_gm_faction: bool = False
     agreeableness: int = 0
     theology: int = 90
@@ -552,7 +544,6 @@ class FactionPatchSchema(Schema):
     current_hex: Optional[int] = None
     destination: Optional[int] = None
     is_mobile: Optional[bool] = None
-    is_player_faction: Optional[bool] = None
     is_gm_faction: Optional[bool] = None
     agreeableness: Optional[int] = None
     theology: Optional[int] = None
@@ -609,7 +600,6 @@ def create_faction(request, map_id: int, body: FactionCreateSchema):
         current_hex=current_hex,
         destination=destination,
         is_mobile=body.is_mobile,
-        is_player_faction=body.is_player_faction,
         is_gm_faction=body.is_gm_faction,
         agreeableness=body.agreeableness,
         theology=body.theology,
@@ -798,7 +788,6 @@ class PartySchema(Schema):
     id: int
     name: str
     map: Optional[int]
-    faction: Optional[int]
     player_count: int
     speed: int
     max_speed: int
@@ -814,10 +803,6 @@ class PartySchema(Schema):
     @staticmethod
     def resolve_map(obj):
         return obj.map_id
-
-    @staticmethod
-    def resolve_faction(obj):
-        return obj.faction_id
 
     @staticmethod
     def resolve_current_hex(obj):
@@ -997,6 +982,9 @@ class PartyActionResponseSchema(Schema):
     lost_roll: Optional[int] = None
     wilderness_event: Optional[str] = None
     event_roll: Optional[int] = None
+    weather_roll: Optional[int] = None
+    weather_before: Optional[str] = None
+    weather_after: Optional[str] = None
 
 
 def _create_party_tick(party, tick, action, sub_tick: int = 0) -> PartyTick:
@@ -1020,6 +1008,7 @@ def party_action(request, party_id: int, body: PartyActionSchema):
     party = get_object_or_404(Party, id=party_id)
     map_id = party.current_hex.map_id if party.current_hex else None
     extra = {}
+    rolls = {}
 
     if body.action == 'move':
         if not body.hex_id:
@@ -1048,14 +1037,8 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         all_map_hexes = list(Hex.objects.filter(map_id=map_id))
         reveal_hex_on_move(destination, all_map_hexes)
 
-        if party.faction and party.faction.is_player_faction:
-            party.faction.current_action = Action.TRAVEL
-            party.faction.destination = destination
-            party.faction.save()
-
-        rolls = {}
         if not (move_map and move_map.map_type == MapType.CITY):
-            rolls = party_move_rolls(old_hex, destination)
+            rolls = party_move_rolls(old_hex, destination, move_map)
             party.is_lost = rolls['lost']
             party.save(update_fields=['is_lost'])
 
@@ -1090,7 +1073,7 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         party.save()
         supply_map = Map.objects.get(id=map_id) if map_id else None
         if supply_map and supply_map.map_type != MapType.CITY:
-            rolls = party_wilderness_roll('supply')
+            rolls = party_wilderness_roll('supply', supply_map)
 
     elif body.action == 'delve':
         if not party.current_hex:
@@ -1116,7 +1099,7 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         party.save()
         rest_map = Map.objects.get(id=map_id) if map_id else None
         if rest_map and rest_map.map_type != MapType.CITY:
-            rolls = party_wilderness_roll('rest')
+            rolls = party_wilderness_roll('rest', rest_map)
 
     elif body.action == 'clear_lost':
         if not party.is_lost:
@@ -1158,11 +1141,6 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         tick_number, events = _run_shift(map_id)
         map_obj.refresh_from_db(fields=['current_tick'])
         tick = map_obj.current_tick
-
-        if party.faction and party.faction.is_player_faction and body.action == 'move':
-            party.refresh_from_db()
-            party.current_hex = party.faction.current_hex
-            party.save()
     else:
         tick_number = map_obj.current_tick.number if map_obj and map_obj.current_tick else 0
         events = []

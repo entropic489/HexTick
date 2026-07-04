@@ -112,13 +112,13 @@ class ActiveDiseaseInline(admin.TabularInline):
 
 @admin.register(Faction)
 class FactionAdmin(admin.ModelAdmin):
-    list_display = ('name', 'is_player_faction', 'population', 'resources', 'technology', 'combat_skill', 'current_hex')
-    list_filter = ('is_player_faction', 'is_mobile')
+    list_display = ('name', 'population', 'resources', 'technology', 'combat_skill', 'current_hex')
+    list_filter = ('is_mobile',)
     search_fields = ('name',)
     readonly_fields = ('last_action', 'famine_streak', 'population_trend_override')
     fieldsets = (
         (None, {
-            'fields': ('name', 'is_mobile', 'is_player_faction', 'current_hex', 'destination', 'image'),
+            'fields': ('name', 'is_mobile', 'current_hex', 'destination', 'image'),
         }),
         ('Stats', {
             'fields': ('population', 'technology', 'technology_max', 'resources',
@@ -281,7 +281,7 @@ class PartyAdmin(admin.ModelAdmin):
     list_display = ('name', 'map', 'current_hex', 'current_action', 'last_action')
     fieldsets = (
         (None, {
-            'fields': ('name', 'map', 'faction'),
+            'fields': ('name', 'map'),
         }),
         ('Stats', {
             'fields': ('speed', 'max_speed', 'resource_generation'),
