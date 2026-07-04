@@ -1,0 +1,148 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+
+.modal {
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 1.25rem;
+  width: 320px;
+  max-width: 95vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  margin: 0;
+  font-size: 1rem;
+  color: #cdd6f4;
+}
+
+.close {
+  background: none;
+  border: none;
+  color: #6c7086;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.close:hover { color: #cdd6f4; }
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 8rem 1fr;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.label {
+  color: #6c7086;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.input {
+  background: #181825;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.4rem;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #89b4fa;
+}
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-top: 1px solid #313244;
+  padding-top: 0.5rem;
+  padding-right: 0.6rem;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.resultRow {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.25rem 0.1rem;
+}
+
+.resultRow:not(:last-child) {
+  border-bottom: 1px solid #181825;
+}
+
+.resultLabel {
+  color: #6c7086;
+  font-size: 0.85rem;
+}
+
+.resultValue {
+  color: #cdd6f4;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.saveBtn,
+.cancelBtn {
+  padding: 0.35rem 0.85rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border: 1px solid;
+}
+
+.saveBtn {
+  background: #89b4fa;
+  border-color: #89b4fa;
+  color: #1e1e2e;
+  font-weight: 600;
+}
+
+.saveBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancelBtn {
+  background: none;
+  border-color: #45475a;
+  color: #6c7086;
+}
+
+.cancelBtn:hover { border-color: #cdd6f4; color: #cdd6f4; }

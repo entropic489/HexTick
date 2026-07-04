@@ -1,6 +1,14 @@
 import { create } from 'zustand';
 import type { TickEvent } from '../types';
 
+export interface MoveResult {
+  action: string;
+  lost: boolean | null;
+  lost_roll: number | null;
+  wilderness_event: string;
+  event_roll: number;
+}
+
 interface GameStore {
   selectedMapId: number | null;
   setSelectedMapId: (id: number | null) => void;
@@ -33,6 +41,9 @@ interface GameStore {
 
   highlightedHexId: number | null;
   setHighlightedHexId: (id: number | null) => void;
+
+  moveResult: MoveResult | null;
+  setMoveResult: (result: MoveResult) => void;
 }
 
 export const useGameStore = create<GameStore>((set) => ({
@@ -80,4 +91,7 @@ export const useGameStore = create<GameStore>((set) => ({
 
   highlightedHexId: null,
   setHighlightedHexId: (id) => set({ highlightedHexId: id }),
+
+  moveResult: null,
+  setMoveResult: (result) => set({ moveResult: result }),
 }));

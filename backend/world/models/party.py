@@ -31,6 +31,7 @@ class Party(models.Model):
     )
 
     tracks_supplies = models.BooleanField(default=True)
+    is_lost = models.BooleanField(default=False)
 
     current_action = models.CharField(max_length=20, choices=Action.choices, null=True, blank=True)
     last_action = models.CharField(max_length=20, choices=Action.choices, null=True, blank=True)

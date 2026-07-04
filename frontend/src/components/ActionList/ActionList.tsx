@@ -1,9 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { postPartyAction } from '../../api/tick';
-import type { Hex, Party, PartyActionType } from '../../types';
+import type { Hex, Party, PartyActionType, WeatherType } from '../../types';
 import { useGameStore } from '../../store/useGameStore';
 import { computeMoveCost } from '../../utils/moveCost';
-import styles from './ActionModal.module.css';
+import styles from './ActionList.module.css';
 
 interface ActionDef {
   action: PartyActionType;
@@ -19,8 +19,8 @@ interface Props {
   originHex: Hex | null;
   mapId: number;
   tickNumber: number;
+  weather: WeatherType;
   onSuccess: () => void;
-  onClose: () => void;
 }
 
 function formatMoveCost(breakdown: ReturnType<typeof computeMoveCost>): string {
@@ -28,24 +28,26 @@ function formatMoveCost(breakdown: ReturnType<typeof computeMoveCost>): string {
   return `Costs ${breakdown.total} speed — ${parts.join(', ')}`;
 }
 
-export function ActionModal({ party, selectedHex, originHex, mapId, tickNumber, onSuccess, onClose }: Props) {
+export function ActionList({ party, selectedHex, originHex, mapId, tickNumber, weather, onSuccess }: Props) {
   const qc = useQueryClient();
   const setMoveResult = useGameStore((s) => s.setMoveResult);
   const onCurrentHex = selectedHex.id === party.current_hex;
   const hasDungeon = selectedHex.pois.some((p) => p.poi_type === 'dungeon' && !p.hidden);
-  const moveCost = computeMoveCost(originHex, selectedHex, tickNumber);
+  const moveCost = computeMoveCost(originHex, selectedHex, tickNumber, weather);
   const tooSlow = !onCurrentHex && moveCost.total > party.speed;
 
   const actions: ActionDef[] = [
     {
       action: 'move',
       label: 'Move',
-      description: formatMoveCost(moveCost),
+      description: moveCost.blocked ? 'Catastrophic weather — no movement possible.' : formatMoveCost(moveCost),
       enabled: !onCurrentHex && selectedHex.player_visible && !tooSlow,
       disabledReason: onCurrentHex
         ? 'Already here.'
         : !selectedHex.player_visible
         ? 'Hex not yet visible.'
+        : moveCost.blocked
+        ? 'Catastrophic weather — no movement possible.'
         : tooSlow
         ? `Not enough speed. ${formatMoveCost(moveCost)} (have ${party.speed}).`
         : undefined,
@@ -121,36 +123,25 @@ export function ActionModal({ party, selectedHex, originHex, mapId, tickNumber, 
   });
 
   return (
-    <div className={styles.backdrop} onClick={onClose}>
-      <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-        <div className={styles.header}>
-          <h3 className={styles.title}>Choose Action</h3>
-          <button className={styles.close} onClick={onClose}>✕</button>
-        </div>
-
-        <div className={styles.hexInfo}>
-          Hex ({selectedHex.row}, {selectedHex.col}) — {selectedHex.terrain_type}
-        </div>
-
-        <div className={styles.actionList}>
-          {actions.map((a) => (
-            <button
-              key={a.action}
-              className={styles.actionBtn}
-              disabled={!a.enabled || isPending}
-              title={a.disabledReason}
-              onClick={() => mutate(a.action)}
-            >
-              <span className={styles.actionLabel}>{a.label}</span>
-              <span className={styles.actionDesc}>
-                {a.enabled ? a.description : a.disabledReason}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {error && <p className={styles.error}>{String(error)}</p>}
+    <div className={styles.container}>
+      <span className={styles.heading}>Actions</span>
+      <div className={styles.actionList}>
+        {actions.map((a) => (
+          <button
+            key={a.action}
+            className={styles.actionBtn}
+            disabled={!a.enabled || isPending}
+            title={a.disabledReason}
+            onClick={() => mutate(a.action)}
+          >
+            <span className={styles.actionLabel}>{a.label}</span>
+            <span className={styles.actionDesc}>
+              {a.enabled ? a.description : a.disabledReason}
+            </span>
+          </button>
+        ))}
       </div>
+      {error && <p className={styles.error}>{String(error)}</p>}
     </div>
   );
 }

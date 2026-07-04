@@ -22,7 +22,6 @@ export function HexModal({ hex, factions, gmMode, onClose, children }: Props) {
         </h2>
 
         <dl className={styles.stats}>
-          <dt>Weather</dt><dd>{hex.weather}</dd>
           <dt>Terrain difficulty</dt><dd>{hex.terrain_difficulty}</dd>
           {gmMode && <><dt>Resources</dt><dd>{hex.resources}</dd></>}
           {gmMode && <><dt>Encounter likelihood</dt><dd>{hex.encounter_likelihood}</dd></>}

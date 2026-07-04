@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { getMap, getHexes, getFactions, getParty } from '../../api/maps';
@@ -7,8 +7,9 @@ import { getCurrentTick } from '../../api/tick';
 import { HexMap } from '../../components/HexMap/HexMap';
 import { HexPanel } from '../../components/HexPanel/HexPanel';
 import { EventLog } from '../../components/EventLog/EventLog';
-import { ActionModal } from '../../components/ActionModal/ActionModal';
+import { ActionList } from '../../components/ActionList/ActionList';
 import { TimeOfDayBadge } from '../../components/TimeOfDayBadge/TimeOfDayBadge';
+import { WeatherIcon } from '../../components/WeatherIcon/WeatherIcon';
 import { ShiftActionsIndicator } from '../../components/ShiftActionsIndicator/ShiftActionsIndicator';
 import { useGameStore } from '../../store/useGameStore';
 import { useTickStream } from '../../hooks/useTickStream';
@@ -21,8 +22,6 @@ export function PlayerPage() {
   const selectedHexId = useGameStore((s) => s.selectedHexId);
   const setSelectedHexId = useGameStore((s) => s.setSelectedHexId);
   const highlightedHexId = useGameStore((s) => s.highlightedHexId);
-
-  const [actionModalOpen, setActionModalOpen] = useState(false);
 
   useTickStream(id);
 
@@ -43,7 +42,6 @@ export function PlayerPage() {
   }, [highlightedHexId, party?.current_hex]);
 
   const publishedImage = gallery.find((img) => img.is_published) ?? null;
-  const playerFaction = factions.find((f) => f.is_player_faction) ?? null;
   const selectedHex = hexes.find((h) => h.id === selectedHexId) ?? null;
   const partyHexFactions = party?.current_hex != null
     ? factions.filter((f) => f.current_hex === party.current_hex && !f.is_player_faction)
@@ -57,9 +55,13 @@ export function PlayerPage() {
         {tickData && <TimeOfDayBadge tickNumber={tickData.tick_number} />}
         <span className={styles.title}>{map.name}</span>
         <ShiftActionsIndicator map={map} />
-        {playerFaction && (
+        <span className={styles.weather}>
+          <WeatherIcon weather={map.weather} size={20} />
+          <span className={styles.weatherLabel}>{map.weather.charAt(0).toUpperCase() + map.weather.slice(1)}</span>
+        </span>
+        {party && (
           <span className={styles.speed}>
-            Speed: {playerFaction.max_speed} | Hex: {playerFaction.current_hex ?? '—'}
+            Speed: {party.speed} / {party.max_speed}
           </span>
         )}
         <span className={`${styles.lockIndicator} ${map.player_actions_locked ? styles.lockRed : styles.lockGreen}`}>
@@ -105,46 +107,40 @@ export function PlayerPage() {
         </div>
         <HexPanel
           hex={selectedHex}
+          hexes={hexes}
           factions={selectedHex ? factions.filter((f) => f.current_hex === selectedHex.id) : []}
           partyHexFactions={partyHexFactions}
           gmMode={false}
           map={map}
           party={party}
+          tickNumber={tickData?.tick_number ?? 0}
           onClose={() => setSelectedHexId(null)}
         >
-          {selectedHex && party && (
-            <button
-              className={styles.moveBtn}
-              onClick={() => setActionModalOpen(true)}
-              disabled={map.player_actions_locked}
-              title={map.player_actions_locked ? 'The GM has locked player actions' : undefined}
-            >
-              {map.player_actions_locked ? 'Locked' : 'Actions…'}
-            </button>
+          {selectedHex && party && !map.player_actions_locked && (
+            <ActionList
+              party={party}
+              selectedHex={selectedHex}
+              originHex={party.current_hex != null ? (hexes.find((h) => h.id === party.current_hex) ?? null) : null}
+              mapId={id}
+              tickNumber={tickData?.tick_number ?? 0}
+              weather={map.weather}
+              onSuccess={() => setSelectedHexId(null)}
+            />
+          )}
+          {map.player_actions_locked && (
+            <p className={styles.lockedNote}>GM has locked player actions.</p>
           )}
         </HexPanel>
       </div>
 
       <EventLog />
 
-      {actionModalOpen && selectedHex && party && (
-        <ActionModal
-          party={party}
-          selectedHex={selectedHex}
-          mapId={id}
-          onSuccess={() => {
-            setActionModalOpen(false);
-            setSelectedHexId(null);
-          }}
-          onClose={() => setActionModalOpen(false)}
-        />
-      )}
-
       {publishedImage && (
         <div className={styles.imageOverlay}>
           <img className={styles.overlayImage} src={publishedImage.image} alt={publishedImage.name} />
         </div>
       )}
+
     </div>
   );
 }

@@ -1,5 +1,5 @@
 export type TerrainType = 'plains' | 'forest' | 'mountain' | 'swamp' | 'desert' | 'coast' | 'ocean' | 'city';
-export type WeatherType = 'fair' | 'unpleasant' | 'inclement' | 'extreme' | 'catastrophic';
+export type WeatherType = 'fair' | 'overcast' | 'inclement' | 'extreme' | 'catastrophic';
 export type ActionType =
   | 'supply' | 'travel' | 'trade' | 'merge' | 'battle'
   | 'train' | 'craft' | 'delve' | 'search' | 'explore';
@@ -15,6 +15,7 @@ export interface Map {
   fog_of_war: boolean;
   map_type: 'regional' | 'city';
   sub_tick: number;
+  weather: WeatherType;
   player_actions_locked: boolean;
 }
 
@@ -40,7 +41,6 @@ export interface Hex {
   terrain_difficulty: number;
   resource_generation: number;
   resources: number;
-  weather: WeatherType;
   encounter_likelihood: number;
   player_explored: boolean;
   player_visible: boolean;
@@ -107,6 +107,7 @@ export interface Party {
   resource_generation: number;
   supplies: number;
   tracks_supplies: boolean;
+  is_lost: boolean;
   current_hex: number | null;
   destination: number | null;
   current_action: string | null;
@@ -130,7 +131,7 @@ export interface TickResponse {
   events: TickEvent[];
 }
 
-export type PartyActionType = 'move' | 'search' | 'explore' | 'supply' | 'delve' | 'social' | 'rest';
+export type PartyActionType = 'move' | 'search' | 'explore' | 'supply' | 'delve' | 'social' | 'rest' | 'clear_lost';
 
 export interface PartyActionRequest {
   action: PartyActionType;
@@ -151,4 +152,8 @@ export interface PartyActionResponse {
   party_tick_id: number;
   encounter_likelihood?: number;
   terrain_type?: TerrainType;
+  lost?: boolean;
+  lost_roll?: number | null;
+  wilderness_event?: string;
+  event_roll?: number;
 }

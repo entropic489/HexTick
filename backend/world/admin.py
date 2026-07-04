@@ -67,8 +67,8 @@ class POIInline(admin.TabularInline):
 
 @admin.register(Hex)
 class HexAdmin(admin.ModelAdmin):
-    list_display = ('map', 'row', 'col', 'terrain_type', 'resources', 'weather', 'player_explored', 'player_visible')
-    list_filter = ('map', 'terrain_type', 'weather', 'player_explored', 'player_visible')
+    list_display = ('map', 'row', 'col', 'terrain_type', 'resources', 'player_explored', 'player_visible')
+    list_filter = ('map', 'terrain_type', 'player_explored', 'player_visible')
     search_fields = ('map__name', 'row', 'col')
     actions = [mark_explored_visible, mark_visible, clear_explored_visible, mark_adjacent_visible]
     inlines = [POIInline]
@@ -193,7 +193,7 @@ class TickAdmin(admin.ModelAdmin):
 class HexTickInline(admin.TabularInline):
     model = HexTick
     extra = 0
-    readonly_fields = ('hex', 'resources', 'weather', 'encounter_likelihood', 'player_explored', 'player_visible')
+    readonly_fields = ('hex', 'resources', 'encounter_likelihood', 'player_explored', 'player_visible')
     can_delete = False
 
 
@@ -206,9 +206,9 @@ class FactionTickInline(admin.TabularInline):
 
 @admin.register(HexTick)
 class HexTickAdmin(admin.ModelAdmin):
-    list_display = ('tick', 'hex', 'resources', 'weather')
+    list_display = ('tick', 'hex', 'resources')
     list_filter = ('tick',)
-    readonly_fields = ('tick', 'hex', 'resources', 'weather', 'encounter_likelihood', 'player_explored', 'player_visible')
+    readonly_fields = ('tick', 'hex', 'resources', 'encounter_likelihood', 'player_explored', 'player_visible')
 
 
 @admin.register(FactionTick)

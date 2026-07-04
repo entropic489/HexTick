@@ -1,10 +1,12 @@
 import { api } from './client';
 import type { Map, Hex, Faction, Party, Knowledge, TerrainType, WeatherType, ActionType } from '../types';
 
+export const patchMapWeather = (mapId: number, weather: WeatherType) =>
+  api.patch<Map>(`/maps/${mapId}/weather/`, { weather });
+
 export interface PatchHexParams {
   terrain_type?: TerrainType;
   resources?: number;
-  weather?: WeatherType;
   encounter_likelihood?: number;
   player_explored?: boolean;
   player_visible?: boolean;

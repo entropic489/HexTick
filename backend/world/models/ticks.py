@@ -1,6 +1,6 @@
 from django.db import models
 
-from .hex import Hex, WeatherType, PointOfInterest
+from .hex import Hex, PointOfInterest
 from .faction import Faction, Action
 
 
@@ -22,7 +22,6 @@ class HexTick(models.Model):
 
     resources = models.IntegerField()
     points_of_interest = models.ManyToManyField(PointOfInterest, blank=True)
-    weather = models.CharField(max_length=20, choices=WeatherType.choices)
     encounter_likelihood = models.IntegerField()
     player_explored = models.BooleanField()
     player_visible = models.BooleanField()

@@ -259,6 +259,21 @@ h3 {
 
 .cancelBtn:hover { border-color: #cdd6f4; color: #cdd6f4; }
 
+.clearLostBtn {
+  margin-top: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  background: none;
+  border: 1px solid #f38ba8;
+  border-radius: 6px;
+  color: #f38ba8;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.clearLostBtn:hover:not(:disabled) { background: rgba(243, 139, 168, 0.1); }
+.clearLostBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .movePartyRow {
   display: flex;
   align-items: center;
@@ -380,11 +395,45 @@ h3 {
   letter-spacing: 0.03em;
 }
 
+.lastMoveSection {
+  background: #181825;
+  border-top: 1px solid #313244;
+  padding: 0.6rem 0.75rem 0.75rem;
+}
+
+.lastMoveSectionTitle {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #6c7086;
+  margin-bottom: 0.4rem;
+}
+
+.lastMoveStats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.6rem;
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.lastMoveStats dt { color: #6c7086; }
+.lastMoveStats dd { color: #cdd6f4; margin: 0; }
+
+.lastMoveEmpty {
+  color: #6c7086;
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+.lostValue { color: #f38ba8 !important; font-weight: 600; }
+.safeValue { color: #a6e3a1 !important; font-weight: 600; }
+.skippedNote { font-weight: 400; color: #6c7086; font-size: 0.78rem; }
+
 .partyFooter {
   background: #181825;
   border-top: 1px solid #313244;
   padding: 0.6rem 0.75rem 0.75rem;
-  margin-top: auto;
 }
 
 .partyFooterTitle {

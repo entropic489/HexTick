@@ -15,6 +15,7 @@ import { useGameStore } from '../../store/useGameStore';
 import { useTickStream } from '../../hooks/useTickStream';
 import { NPCModal } from '../../components/NPCModal/NPCModal';
 import { MonsterModal } from '../../components/MonsterModal/MonsterModal';
+import { DiceModal } from '../../components/DiceModal/DiceModal';
 import styles from './GMPage.module.css';
 
 export function GMPage() {
@@ -22,6 +23,7 @@ export function GMPage() {
   const id = Number(mapId);
   const [npcOpen, setNpcOpen] = useState(false);
   const [monsterOpen, setMonsterOpen] = useState(false);
+  const [diceOpen, setDiceOpen] = useState(false);
   const [randomHexId, setRandomHexId] = useState<number | null>(null);
   const [permanentUnlock, setPermanentUnlock] = useState(false);
 
@@ -83,7 +85,7 @@ export function GMPage() {
     ? hexes.map((h) => {
         const snap = historicalState.hex_ticks.find((ht) => ht.hex_id === h.id);
         if (!snap) return h;
-        return { ...h, resources: snap.resources, weather: snap.weather as typeof h.weather, encounter_likelihood: snap.encounter_likelihood, player_explored: snap.player_explored, player_visible: snap.player_visible };
+        return { ...h, resources: snap.resources, encounter_likelihood: snap.encounter_likelihood, player_explored: snap.player_explored, player_visible: snap.player_visible };
       })
     : hexes;
 
@@ -222,6 +224,12 @@ export function GMPage() {
         </button>
         <button
           className={styles.addFactionBtn}
+          onClick={() => setDiceOpen(true)}
+        >
+          Dice
+        </button>
+        <button
+          className={styles.addFactionBtn}
           onClick={() => {
             const eligible = hexes.filter((h) => h.terrain_type !== 'ocean');
             if (eligible.length === 0) return;
@@ -245,6 +253,7 @@ export function GMPage() {
       </header>
       {npcOpen && <NPCModal onClose={() => setNpcOpen(false)} />}
       {monsterOpen && <MonsterModal onClose={() => setMonsterOpen(false)} />}
+      {diceOpen && <DiceModal onClose={() => setDiceOpen(false)} />}
 
       <div className={styles.body}>
         <div className={styles.mapArea}>
@@ -265,7 +274,7 @@ export function GMPage() {
               : setSelectedHexId
             }
           />
-          <TickControls />
+          <TickControls map={map} />
         </div>
         {multiSelectMode ? (
           <BulkHexPanel
@@ -284,6 +293,7 @@ export function GMPage() {
             mapId={id}
             map={map}
             party={displayedParty}
+            tickNumber={tickData?.tick_number ?? 0}
             onClose={() => setSelectedHexId(null)}
           />
         )}

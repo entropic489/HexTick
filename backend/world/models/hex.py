@@ -68,14 +68,6 @@ class POIType(models.TextChoices):
     GENERAL      = 'general',      'General'
 
 
-class WeatherType(models.TextChoices):
-    FAIR         = 'fair',         'Fair'
-    UNPLEASANT   = 'unpleasant',   'Unpleasant'
-    INCLEMENT    = 'inclement',    'Inclement'
-    EXTREME      = 'extreme',      'Extreme'
-    CATASTROPHIC = 'catastrophic', 'Catastrophic'
-
-
 class Hex(models.Model):
     map = models.ForeignKey(Map, on_delete=models.CASCADE, related_name='hexes')
     row = models.IntegerField()
@@ -85,9 +77,6 @@ class Hex(models.Model):
         max_length=20, choices=TerrainType.choices(), default=TerrainType.PLAINS
     )
     resources = models.IntegerField(default=0)
-    weather = models.CharField(
-        max_length=20, choices=WeatherType.choices, default=WeatherType.FAIR
-    )
     encounter_likelihood = models.IntegerField(default=0)
     player_explored = models.BooleanField(default=False)
     player_visible = models.BooleanField(default=False)

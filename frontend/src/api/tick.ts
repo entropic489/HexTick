@@ -4,7 +4,6 @@ import type { TickRequest, TickResponse, PartyActionRequest, PartyActionResponse
 export interface HexTickState {
   hex_id: number;
   resources: number;
-  weather: string;
   encounter_likelihood: number;
   player_explored: boolean;
   player_visible: boolean;

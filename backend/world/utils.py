@@ -22,11 +22,20 @@ def hex_distance(a, b) -> int:
     return (abs(dq) + abs(dr) + abs(dq + dr)) // 2
 
 
-def move_difficulty(origin, destination, tick_number: int) -> int:
+_WEATHER_MOVE_PENALTY: dict[str, int] = {'inclement': 1, 'extreme': 2}
+_WEATHER_IMPASSABLE = {'catastrophic'}
+
+
+def move_difficulty(origin, destination, tick_number: int, weather: str = 'fair') -> int:
+    if weather in _WEATHER_IMPASSABLE:
+        return 999
     is_night = tick_number % 3 == 2
+    weather_penalty = _WEATHER_MOVE_PENALTY.get(weather, 0)
     if origin is not None and origin.has_roads and destination.has_roads:
-        return 1 + (1 if is_night else 0)
-    return destination.terrain_difficulty + (2 if is_night else 0)
+        base = 1 + (1 if is_night else 0)
+    else:
+        base = destination.terrain_difficulty + (1 if is_night else 0)
+    return base + weather_penalty
 
 
 def adjacent_hexes(hex, all_hexes: list) -> list:

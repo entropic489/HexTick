@@ -1,10 +1,10 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import type { Hex, Faction, Party, Map, TerrainType, WeatherType, ActionType } from '../../types';
+import type { Hex, Faction, Party, TerrainType, ActionType } from '../../types';
 import { patchHex, patchFaction, postHighlightHex } from '../../api/maps';
 import { useGameStore } from '../../store/useGameStore';
-import { patchParty } from '../../api/tick';
+import { patchParty, postPartyAction } from '../../api/tick';
 import { getGallery, publishGalleryImage } from '../../api/gallery';
 import { AddPOIModal } from '../AddPOIModal/AddPOIModal';
 import { AddFactionModal } from '../AddFactionModal/AddFactionModal';
@@ -12,7 +12,6 @@ import { ActionModal } from '../ActionModal/ActionModal';
 import styles from './HexPanel.module.css';
 
 const TERRAIN_TYPES: TerrainType[] = ['plains', 'forest', 'mountain', 'swamp', 'desert', 'coast', 'ocean', 'city'];
-const WEATHER_TYPES: WeatherType[] = ['fair', 'unpleasant', 'inclement', 'extreme', 'catastrophic'];
 const ACTION_TYPES: ActionType[] = ['supply', 'travel', 'trade', 'merge', 'battle', 'train', 'craft', 'delve', 'search', 'explore'];
 
 
@@ -57,7 +56,6 @@ interface FactionEditState {
 interface EditState {
   terrain_type: TerrainType;
   resources: number;
-  weather: WeatherType;
   encounter_likelihood: number;
   player_explored: boolean;
   player_visible: boolean;
@@ -71,7 +69,6 @@ function hexToEditState(hex: Hex): EditState {
   return {
     terrain_type: hex.terrain_type,
     resources: hex.resources,
-    weather: hex.weather,
     encounter_likelihood: hex.encounter_likelihood,
     player_explored: hex.player_explored,
     player_visible: hex.player_visible,
@@ -92,11 +89,12 @@ interface Props {
   mapId?: number;
   map?: { map_type: 'regional' | 'city'; id: number } | null;
   party?: Party | null;
+  tickNumber?: number;
   onClose: () => void;
   children?: ReactNode;
 }
 
-export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmMode, prepMode = false, mapId, map, party, onClose, children }: Props) {
+export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmMode, prepMode = false, mapId, map, party, tickNumber = 0, onClose, children }: Props) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const factionHexSelectMode = useGameStore((s) => s.factionHexSelectMode);
@@ -105,6 +103,7 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
   const clearFactionHexSelect = useGameStore((s) => s.clearFactionHexSelect);
   const highlightedHexId = useGameStore((s) => s.highlightedHexId);
   const setHighlightedHexId = useGameStore((s) => s.setHighlightedHexId);
+  const moveResult = useGameStore((s) => s.moveResult);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditState | null>(null);
   const [addingPOI, setAddingPOI] = useState(false);
@@ -148,6 +147,13 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
       queryClient.invalidateQueries({ queryKey: ['party'] });
       setPartyEditing(false);
       setPartyDraft(null);
+    },
+  });
+
+  const clearLostMutation = useMutation({
+    mutationFn: () => postPartyAction(party!.id, { action: 'clear_lost' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['party'] });
     },
   });
 
@@ -249,19 +255,6 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
                   >
                     {TERRAIN_TYPES.map((t) => (
                       <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className={styles.fieldLabel}>
-                  <span className={styles.fieldName}>Weather</span>
-                  <select
-                    className={styles.select}
-                    value={draft.weather}
-                    onChange={(e) => set('weather', e.target.value as WeatherType)}
-                  >
-                    {WEATHER_TYPES.map((w) => (
-                      <option key={w} value={w}>{w.charAt(0).toUpperCase() + w.slice(1)}</option>
                     ))}
                   </select>
                 </label>
@@ -387,7 +380,6 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
           ) : (
             <>
               <dl className={styles.stats}>
-                <dt>Weather</dt><dd>{hex.weather}</dd>
                 <dt>Terrain difficulty</dt><dd>{hex.terrain_difficulty}</dd>
                 {gmMode && <><dt>Resources</dt><dd>{hex.resources}</dd></>}
                 {gmMode && <><dt>Encounter likelihood</dt><dd>{hex.encounter_likelihood}</dd></>}
@@ -652,9 +644,6 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
                       {hex.terrain_type.charAt(0).toUpperCase() + hex.terrain_type.slice(1)}
                     </span>
                   )}
-                  {hex.player_visible && (
-                    <span className={styles.hexLabel}>{hex.weather}</span>
-                  )}
                   {hex.has_roads && (
                     <span className={styles.hexLabel}>Roads</span>
                   )}
@@ -738,13 +727,34 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
         <ActionModal
           party={party}
           selectedHex={hex}
+          originHex={hexes.find((h) => h.id === party.current_hex) ?? null}
           mapId={mapId}
+          tickNumber={tickNumber}
           onSuccess={() => setGmActionModalOpen(false)}
           onClose={() => setGmActionModalOpen(false)}
         />
       )}
 
-      {party && (
+      <div className={styles.lastMoveSection}>
+        <div className={styles.lastMoveSectionTitle}>Last Action Result</div>
+        {moveResult ? (
+          <dl className={styles.lastMoveStats}>
+            <dt>Action</dt><dd style={{textTransform: 'capitalize'}}>{moveResult.action}</dd>
+            <dt>Navigation</dt>
+            <dd className={moveResult.lost ? styles.lostValue : styles.safeValue}>
+              {moveResult.lost ? 'Lost' : 'On course'}
+              {!moveResult.lost && moveResult.lost_roll === null && moveResult.lost !== null && (
+                <span className={styles.skippedNote}> (Skipped)</span>
+              )}
+            </dd>
+            <dt>Event</dt><dd>{moveResult.wilderness_event}</dd>
+          </dl>
+        ) : (
+          <p className={styles.lastMoveEmpty}>No action yet.</p>
+        )}
+      </div>
+
+      {party && gmMode && (
         <div className={styles.partyFooter}>
           <div className={styles.partyFooterTitle}>
             Party
@@ -830,15 +840,25 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
               {partyMutation.isError && <p className={styles.error}>Save failed.</p>}
             </div>
           ) : (
-            <dl className={styles.partyStats}>
-              <dt>Players</dt><dd>{party.player_count}</dd>
-              {party.tracks_supplies && <><dt>Supplies</dt><dd>{party.supplies}</dd></>}
-              <dt>Hex</dt><dd>{party.current_hex ?? '—'}</dd>
-              <dt>Destination</dt><dd>{party.destination ?? '—'}</dd>
-              <dt>Speed</dt><dd>{party.speed} / {party.max_speed}</dd>
-              <dt>Action</dt><dd>{party.current_action ?? '—'}</dd>
-              <dt>Last action</dt><dd>{party.last_action ?? '—'}</dd>
-            </dl>
+            <>
+              <dl className={styles.partyStats}>
+                <dt>Players</dt><dd>{party.player_count}</dd>
+                {party.tracks_supplies && <><dt>Supplies</dt><dd>{party.supplies}</dd></>}
+                <dt>Hex</dt><dd>{party.current_hex ?? '—'}</dd>
+                <dt>Destination</dt><dd>{party.destination ?? '—'}</dd>
+                <dt>Speed</dt><dd>{party.speed} / {party.max_speed}</dd>
+                <dt>Action</dt><dd>{party.current_action ?? '—'}</dd>
+              </dl>
+              {party.is_lost && (
+                <button
+                  className={styles.clearLostBtn}
+                  disabled={clearLostMutation.isPending}
+                  onClick={() => clearLostMutation.mutate()}
+                >
+                  {clearLostMutation.isPending ? 'Clearing…' : 'Clear Lost (spend terrain cost)'}
+                </button>
+              )}
+            </>
           )}
         </div>
       )}

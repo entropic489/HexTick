@@ -34,9 +34,24 @@
   flex: 1;
 }
 
+.weather {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  margin-right: 0.75rem;
+}
+
+.weatherLabel {
+  font-size: 0.82rem;
+  color: #cdd6f4;
+  opacity: 0.8;
+}
+
 .speed {
-  font-size: 0.85rem;
+  font-size: 1.1rem;
+  font-weight: 700;
   color: #a6e3a1;
+  letter-spacing: 0.02em;
 }
 
 .moveBtn {
@@ -53,6 +68,12 @@
 
 .moveBtn:hover:not(:disabled) { background: #2a4f7f; }
 .moveBtn:disabled { opacity: 0.4; cursor: default; }
+
+.lockedNote {
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
+  color: #f38ba8;
+}
 
 .lockIndicator {
   display: flex;

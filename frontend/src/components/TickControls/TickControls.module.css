@@ -54,3 +54,55 @@
   color: #f38ba8 !important;
   margin-left: auto;
 }
+
+.weatherControl {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: auto;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  padding: 0.15rem 0.35rem;
+  background: #1e1e2e;
+}
+
+.weatherArrow {
+  background: none !important;
+  border: none !important;
+  padding: 0.1rem 0.3rem !important;
+  font-size: 0.75rem;
+  color: #7f849c;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.weatherArrow:hover:not(:disabled) {
+  color: #cdd6f4 !important;
+  background: none !important;
+}
+
+.weatherDisplay {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 5.5rem;
+  justify-content: center;
+}
+
+.weatherDirty {
+  opacity: 0.75;
+}
+
+.weatherName {
+  font-size: 0.8rem;
+  color: #cdd6f4;
+  white-space: nowrap;
+}
+
+.weatherConfirm {
+  background: #2a4a2a !important;
+  border-color: #a6e3a1 !important;
+  color: #a6e3a1 !important;
+  padding: 0.2rem 0.5rem !important;
+  font-size: 0.78rem !important;
+}

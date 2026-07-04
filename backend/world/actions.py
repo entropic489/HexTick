@@ -1,5 +1,6 @@
 import random
 from dataclasses import dataclass
+from enum import StrEnum
 
 from .models.faction import Faction, Action, DiseaseType, ActiveDisease
 from .models.hex import Hex
@@ -7,6 +8,62 @@ from .models.party import Party
 from .models.ticks import Tick, HexTick, FactionTick
 from .models.settings import WorldSettings
 from .utils import modifier, hex_distance, night_bonus, move_difficulty
+
+
+class WildernessEvent(StrEnum):
+    ENCOUNTER = 'Encounter'
+    SIGN = 'Sign'
+    ENVIRONMENT = 'Environment'
+    LOSS = 'Loss'
+    EXHAUSTION = 'Exhaustion'
+    QUIET = 'Quiet'
+
+
+_WILDERNESS_TABLE = {
+    1: WildernessEvent.ENCOUNTER,
+    2: WildernessEvent.SIGN,
+    3: WildernessEvent.ENVIRONMENT,
+    4: WildernessEvent.LOSS,
+    5: WildernessEvent.EXHAUSTION,
+    6: WildernessEvent.QUIET,
+}
+
+
+def party_move_rolls(origin: Hex, destination: Hex) -> dict:
+    """Roll for lost (d6) and wilderness event (d6) on party movement.
+
+    Lost roll is skipped if both hexes have roads or both hexes have rivers.
+    """
+    skip_lost = (origin.has_roads and destination.has_roads) or (origin.has_rivers and destination.has_rivers)
+    lost_roll = random.randint(1, 6)
+    lost = False if skip_lost else (lost_roll == 6)
+    event_roll = random.randint(1, 6)
+    return {
+        'lost': lost,
+        'lost_roll': lost_roll if not skip_lost else None,
+        'wilderness_event': _WILDERNESS_TABLE[event_roll].value,
+        'event_roll': event_roll,
+    }
+
+
+# Rest treats Sign (2) and Exhaustion (5) as Quiet (6) — those outcomes are irrelevant while resting.
+_REST_ROLL_REMAP = {2: 6, 5: 6}
+
+
+def party_wilderness_roll(action: str) -> dict:
+    """Roll a d6 wilderness event for supply or rest actions.
+
+    For rest, results 2 (Sign) and 5 (Exhaustion) are remapped to 6 (Quiet).
+    Returns {event_roll, wilderness_event}; no lost roll.
+    """
+    event_roll = random.randint(1, 6)
+    effective_roll = _REST_ROLL_REMAP.get(event_roll, event_roll) if action == 'rest' else event_roll
+    return {
+        'lost': None,
+        'lost_roll': None,
+        'wilderness_event': _WILDERNESS_TABLE[effective_roll].value,
+        'event_roll': event_roll,
+    }
 
 
 
@@ -25,6 +82,7 @@ def _select_action(
     nearby_factions: list[Faction],
     candidate_hexes: list[Hex],
     tick_number: int,
+    weather: str = 'fair',
 ) -> ActionResult:
     hex = faction.current_hex
     candidate_hexes = list(candidate_hexes)
@@ -53,9 +111,9 @@ def _select_action(
                     key=lambda h: hex_distance(h, faction.destination),
                     default=step,
                 )
-                return travel(faction, detour, tick_number)
+                return travel(faction, detour, tick_number, weather)
             if step:
-                return travel(faction, step, tick_number)
+                return travel(faction, step, tick_number, weather)
 
     # Resolve nearest faction within scouting range
     in_range = [
@@ -76,7 +134,7 @@ def _select_action(
                     default=None,
                 )
                 if step:
-                    return travel(faction, step, tick_number)
+                    return travel(faction, step, tick_number, weather)
         if outmatched:
             best = max(
                 candidate_hexes,
@@ -85,7 +143,7 @@ def _select_action(
                 default=None,
             )
             if best:
-                return travel(faction, best, tick_number)
+                return travel(faction, best, tick_number, weather)
         elif faction.agreeableness < 0 and faction.combat_skill >= closest.combat_skill:
             return battle(faction, closest)
         elif closest.agreeableness >= 0 and faction.last_action != Action.TRADE:
@@ -104,7 +162,7 @@ def _select_action(
             default=None,
         )
         if best:
-            return travel(faction, best, tick_number)
+            return travel(faction, best, tick_number, weather)
 
     # Delve if there's a dungeon, resources cover next round, and theology check passes
     dungeon = hex.pois.filter(poi_type='dungeon', hidden=False).first()
@@ -124,9 +182,10 @@ def tick_faction(
     tick: Tick,
     nearby_factions: list[Faction],
     candidate_hexes: list[Hex],
+    weather: str = 'fair',
 ) -> FactionTick:
     if not faction.is_player_faction and not faction.is_gm_faction:
-        result = _select_action(faction, nearby_factions, candidate_hexes, tick.number)
+        result = _select_action(faction, nearby_factions, candidate_hexes, tick.number, weather)
         faction.last_action = faction.current_action
         faction.current_action = result.action
         faction.next_action = None
@@ -216,7 +275,6 @@ def tick_hex(hex: Hex, tick: Tick) -> HexTick:
         tick=tick,
         hex=hex,
         resources=hex.resources,
-        weather=hex.weather,
         encounter_likelihood=hex.encounter_likelihood,
         player_explored=hex.player_explored,
         player_visible=hex.player_visible,
@@ -356,8 +414,8 @@ def random_encounter(faction: Faction, hex: Hex) -> str:
         return f"found resources: +{gained}"
 
 
-def travel(faction: Faction, destination: Hex, tick_number: int) -> ActionResult:
-    cost = move_difficulty(faction.current_hex, destination, tick_number)
+def travel(faction: Faction, destination: Hex, tick_number: int, weather: str = 'fair') -> ActionResult:
+    cost = move_difficulty(faction.current_hex, destination, tick_number, weather)
     if faction.speed < cost:
         return supply(faction, faction.current_hex) if faction.current_hex else train(faction)
     faction.speed -= cost

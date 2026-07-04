@@ -1,0 +1,61 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.heading {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6c7086;
+}
+
+.actionList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.actionBtn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.6rem 0.75rem;
+  background: #181825;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.1s;
+  width: 100%;
+}
+
+.actionBtn:not(:disabled):hover {
+  border-color: #89b4fa;
+}
+
+.actionBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.actionLabel {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+
+.actionDesc {
+  font-size: 0.78rem;
+  color: #6c7086;
+}
+
+.error {
+  color: #f38ba8;
+  font-size: 0.8rem;
+  margin: 0;
+}

@@ -1,5 +1,5 @@
-from .world import Map, MapType
-from .hex import Hex, TerrainType, WeatherType, PointOfInterest
+from .world import Map, MapType, WeatherType
+from .hex import Hex, TerrainType, PointOfInterest
 from .faction import Faction, Action, DiseaseType, ActiveDisease
 from .characters import Knowledge
 from .ticks import Tick, HexTick, FactionTick, PartyTick
@@ -8,8 +8,8 @@ from .party import Party
 from .gallery import GalleryImage
 
 __all__ = [
-    'Map',
-    'Hex', 'TerrainType', 'WeatherType', 'PointOfInterest',
+    'Map', 'MapType', 'WeatherType',
+    'Hex', 'TerrainType', 'PointOfInterest',
     'Faction', 'Action', 'DiseaseType', 'ActiveDisease',
     'Knowledge',
     'Tick', 'HexTick', 'FactionTick', 'PartyTick',

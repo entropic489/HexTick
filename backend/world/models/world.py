@@ -8,6 +8,14 @@ class AgeChoices(models.IntegerChoices):
     DYING    = 4, 'Age of Dying'
 
 
+class WeatherType(models.TextChoices):
+    FAIR         = 'fair',         'Fair'
+    OVERCAST     = 'overcast',     'Overcast'
+    INCLEMENT    = 'inclement',    'Inclement'
+    EXTREME      = 'extreme',      'Extreme'
+    CATASTROPHIC = 'catastrophic', 'Catastrophic'
+
+
 class MapType(models.TextChoices):
     REGIONAL = 'regional', 'Regional'
     CITY     = 'city',     'City'
@@ -28,6 +36,7 @@ class Map(models.Model):
     map_type = models.CharField(max_length=20, choices=MapType.choices, default=MapType.REGIONAL)
     # City maps only: counts party actions within the current shift (0–2). Resets to 0 on shift tick.
     sub_tick = models.PositiveIntegerField(default=0)
+    weather = models.CharField(max_length=20, choices=WeatherType.choices, default=WeatherType.FAIR)
     player_actions_locked = models.BooleanField(default=False)
     current_tick = models.ForeignKey(
         'world.Tick', null=True, blank=True,

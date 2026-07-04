@@ -11,7 +11,7 @@ from world.models import Map, MapType, Hex, PointOfInterest, Faction, Tick, Fact
 from world.models.characters import Knowledge
 from world.models.party import Party
 from world.models.faction import Action
-from world.actions import tick_hex, tick_faction, tick_party, reveal_hex_on_move, reveal_pois_on_search
+from world.actions import tick_hex, tick_faction, tick_party, reveal_hex_on_move, reveal_pois_on_search, party_move_rolls, party_wilderness_roll
 from world.utils import hex_distance, modifier, adjacent_hexes, night_bonus, move_difficulty
 
 api = NinjaAPI(urls_namespace="api")
@@ -58,6 +58,7 @@ class MapSchema(Schema):
     fog_of_war: bool
     map_type: str
     sub_tick: int
+    weather: str
     player_actions_locked: bool
 
 
@@ -81,6 +82,19 @@ def set_map_locked(request, map_id: int, body: MapLockSchema):
     map_obj.player_actions_locked = body.locked
     map_obj.save(update_fields=['player_actions_locked'])
     _redis.publish(_sse_channel(map_id), json.dumps({"type": "map_update"}))
+    return map_obj
+
+
+class MapWeatherSchema(Schema):
+    weather: str
+
+
+@api.patch("/maps/{map_id}/weather/", response=MapSchema)
+def set_map_weather(request, map_id: int, body: MapWeatherSchema):
+    map_obj = get_object_or_404(Map, id=map_id)
+    map_obj.weather = body.weather
+    map_obj.save(update_fields=['weather'])
+    _redis.publish(_sse_channel(map_id), json.dumps({"type": "weather_update", "weather": body.weather}))
     return map_obj
 
 
@@ -208,7 +222,6 @@ def duplicate_map(request, map_id: int, body: DuplicateMapSchema):
                 col=h.col,
                 terrain_type=h.terrain_type,
                 resources=h.resources,
-                weather=h.weather,
                 encounter_likelihood=h.encounter_likelihood,
                 player_explored=h.player_explored,
                 player_visible=h.player_visible,
@@ -352,7 +365,6 @@ class HexSchema(Schema):
     terrain_difficulty: int
     resource_generation: int
     resources: int
-    weather: str
     encounter_likelihood: int
     player_explored: bool
     player_visible: bool
@@ -375,7 +387,6 @@ class HexSchema(Schema):
 class HexPatchSchema(Schema):
     terrain_type: Optional[str] = None
     resources: Optional[int] = None
-    weather: Optional[str] = None
     encounter_likelihood: Optional[int] = None
     player_explored: Optional[bool] = None
     player_visible: Optional[bool] = None
@@ -726,7 +737,7 @@ def _run_shift(map_id: int) -> tuple[int, list[dict]]:
         if faction.movement_restricted and not faction.is_gm_faction:
             allowed_ids = {h.id for h in faction.allowed_hexes.all()}
             candidates = [h for h in candidates if h.id in allowed_ids]
-        ft = tick_faction(faction, tick, nearby, candidates)
+        ft = tick_faction(faction, tick, nearby, candidates, map_obj.weather)
         faction_ticks.append((faction, ft))
 
     try:
@@ -794,6 +805,7 @@ class PartySchema(Schema):
     resource_generation: int
     supplies: int
     tracks_supplies: bool
+    is_lost: bool
     current_hex: Optional[int]
     destination: Optional[int]
     current_action: Optional[str]
@@ -835,7 +847,6 @@ def list_ticks(request, map_id: int):
 class HexTickStateSchema(Schema):
     hex_id: int
     resources: int
-    weather: str
     encounter_likelihood: int
     player_explored: bool
     player_visible: bool
@@ -887,7 +898,6 @@ def get_tick_state(request, map_id: int, tick_number: int):
             {
                 'hex_id': ht.hex_id,
                 'resources': ht.resources,
-                'weather': ht.weather,
                 'encounter_likelihood': ht.encounter_likelihood,
                 'player_explored': ht.player_explored,
                 'player_visible': ht.player_visible,
@@ -934,7 +944,6 @@ def reset_to_tick(request, map_id: int, tick_number: int):
     for ht in tick.hex_ticks.all():
         Hex.objects.filter(id=ht.hex_id).update(
             resources=ht.resources,
-            weather=ht.weather,
             encounter_likelihood=ht.encounter_likelihood,
             player_explored=ht.player_explored,
             player_visible=ht.player_visible,
@@ -983,6 +992,11 @@ class PartyActionResponseSchema(Schema):
     # Returned on move so GM can reference encounter info
     encounter_likelihood: Optional[int] = None
     terrain_type: Optional[str] = None
+    # Wilderness rolls (move only, regional maps only)
+    lost: Optional[bool] = None
+    lost_roll: Optional[int] = None
+    wilderness_event: Optional[str] = None
+    event_roll: Optional[int] = None
 
 
 def _create_party_tick(party, tick, action, sub_tick: int = 0) -> PartyTick:
@@ -1017,7 +1031,7 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         move_map = Map.objects.get(id=map_id) if map_id else None
         map_current = move_map.current_tick if move_map else None
         current_tick_number = map_current.number if map_current else 0
-        move_cost = move_difficulty(party.current_hex, destination, current_tick_number)
+        move_cost = move_difficulty(party.current_hex, destination, current_tick_number, move_map.weather if move_map else 'fair')
         if move_map and move_map.map_type != MapType.CITY:
             if move_cost > party.speed:
                 return api.create_response(request, {'detail': 'You must rest before traveling here.'}, status=400)
@@ -1039,9 +1053,16 @@ def party_action(request, party_id: int, body: PartyActionSchema):
             party.faction.destination = destination
             party.faction.save()
 
+        rolls = {}
+        if not (move_map and move_map.map_type == MapType.CITY):
+            rolls = party_move_rolls(old_hex, destination)
+            party.is_lost = rolls['lost']
+            party.save(update_fields=['is_lost'])
+
         extra = {
             'encounter_likelihood': destination.encounter_likelihood,
             'terrain_type': destination.terrain_type,
+            **rolls,
         }
 
     elif body.action == 'search':
@@ -1067,6 +1088,9 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         party.last_action = party.current_action
         party.current_action = Action.SUPPLY
         party.save()
+        supply_map = Map.objects.get(id=map_id) if map_id else None
+        if supply_map and supply_map.map_type != MapType.CITY:
+            rolls = party_wilderness_roll('supply')
 
     elif body.action == 'delve':
         if not party.current_hex:
@@ -1090,6 +1114,28 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         party.last_action = party.current_action
         party.current_action = Action.REST
         party.save()
+        rest_map = Map.objects.get(id=map_id) if map_id else None
+        if rest_map and rest_map.map_type != MapType.CITY:
+            rolls = party_wilderness_roll('rest')
+
+    elif body.action == 'clear_lost':
+        if not party.is_lost:
+            return api.create_response(request, {'detail': 'Party is not lost.'}, status=400)
+        if not party.current_hex:
+            return api.create_response(request, {'detail': 'Party has no current hex.'}, status=400)
+        map_obj_cl = Map.objects.get(id=map_id) if map_id else None
+        tick_num_cl = map_obj_cl.current_tick.number if map_obj_cl and map_obj_cl.current_tick else 0
+        cost = party.current_hex.terrain_difficulty + night_bonus(tick_num_cl)
+        party.speed = max(0, party.speed - cost)
+        party.is_lost = False
+        party.last_action = party.current_action
+        party.current_action = Action.TRAVEL
+        party.save()
+        if map_id:
+            transaction.on_commit(lambda: _redis.publish(
+                _sse_channel(map_id),
+                json.dumps({'type': 'navigation_update', 'lost': False}),
+            ))
 
     else:
         return api.create_response(request, {'detail': f'Unknown action: {body.action}'}, status=400)
@@ -1128,6 +1174,9 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         map_obj.player_actions_locked = True
         map_obj.save(update_fields=['player_actions_locked'])
         transaction.on_commit(lambda: broadcast_tick(map_id, tick_number))
+        if body.action in ('move', 'supply', 'rest') and rolls:
+            move_result_payload = json.dumps({'type': 'move_result', 'action': body.action, **rolls})
+            transaction.on_commit(lambda: _redis.publish(_sse_channel(map_id), move_result_payload))
 
     return {'tick_number': tick_number, 'events': events, 'party_tick_id': party_tick.id, **extra}
 

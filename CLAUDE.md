@@ -40,8 +40,8 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
     world/                      # The only Django app
       models/
         __init__.py             # re-exports everything; import from here
-        world.py                # Map, AgeChoices
-        hex.py                  # Hex, TerrainType, WeatherType, POIType, PointOfInterest
+        world.py                # Map, AgeChoices, WeatherType, MapType
+        hex.py                  # Hex, TerrainType, POIType, PointOfInterest
         faction.py              # Faction, Action, DiseaseType, ActiveDisease
         characters.py           # Item, Knowledge, Character, CharacterTick
         ticks.py                # Tick, HexTick, FactionTick, PartyTick
@@ -75,6 +75,8 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 
 ## Hard rules
 
+**Delete dead code immediately.** When a component, function, store key, or import is no longer used, remove it in the same session — don't leave it for later. Unused code creates false context for future sessions.
+
 **Models are dumb.** No game logic, no dice rolls, no side effects in model methods. Properties that compute derived values are fine. Anything that changes state or rolls dice lives in `actions.py`.
 
 **`actions.py` is the game engine.** It imports models freely. Models never import from `actions.py`.
@@ -87,7 +89,7 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 
 **`Map.map_type`** is either `regional` (default) or `city`. On city maps, `Map.sub_tick` counts party actions within the current shift (0–2). Every party action increments `sub_tick`; when `sub_tick % 3 == 0` it resets to 0 and `_run_shift` fires (advancing the global tick). On regional maps, every party action fires `_run_shift` immediately. Factions still tick once per shift regardless of map type. `PartyTick.sub_tick` records where in the shift the action fell (0 = shift tick, 1 or 2 = mid-shift).
 
-**Time of day** cycles every 3 ticks: `% 3 == 0` → Morning, `% 3 == 1` → Afternoon, `% 3 == 2` → Night. Current day displayed as `floor(tick / 3)`. Night adds +2 to `terrain_difficulty` for all movement (factions, characters, party) via `night_bonus()` in `utils.py`. The frontend `TimeOfDayBadge` component reads from `GET /api/maps/{map_id}/tick/current/`.
+**Time of day** cycles every 3 ticks: `% 3 == 0` → Morning, `% 3 == 1` → Afternoon, `% 3 == 2` → Night. Current day displayed as `floor(tick / 3)`. Night adds +2 via `night_bonus()` for faction/character non-movement uses. Movement uses `move_difficulty()` which applies its own night penalty of +1 (not +2). The frontend `TimeOfDayBadge` component reads from `GET /api/maps/{map_id}/tick/current/`.
 
 **DB queries stay out of the engine.** `tick_faction`, `tick_hex`, `tick_character` accept pre-fetched lists (`nearby_factions`, `candidate_hexes`, `factions_on_hex`). Don't add queries inside these functions.
 
@@ -111,13 +113,15 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 
 ## Non-obvious quirks
 
-**`AgeChoices` lives in `world.py`**, not alongside the models that use it. `PointOfInterest.age` and `Knowledge.age` both import from there.
+**`AgeChoices` and `WeatherType` live in `world.py`**, not alongside the models that use them. `PointOfInterest.age` and `Knowledge.age` import `AgeChoices` from there. `WeatherType` was moved from `hex.py` to `world.py` to avoid a circular import (`hex.py` imports `Map` from `world.py`, so `world.py` cannot import from `hex.py`).
 
 **`TerrainType` is not a `TextChoices` enum.** It's a custom `str` subclass with `terrain_difficulty` and `resource_generation` as instance attributes. Use `TerrainType.from_value(str)` to look up by DB value. `terrain_difficulty` and `resource_generation` on `Hex` are `@property` — do not add them as DB columns.
 
 **`modifier()`** — never inline `score // 10`. Always call `modifier()` from `world.utils`.
 
-**`move_difficulty(origin, destination, tick_number)`** in `utils.py` is the single source of truth for movement cost. It encapsulates both terrain and night penalty, and the road rule: if both hexes `has_roads`, base cost is 1 and night adds +1 (not +2). Never inline `destination.terrain_difficulty + night_bonus(...)` for movement — always call `move_difficulty`. `night_bonus()` still exists for non-movement uses.
+**`move_difficulty(origin, destination, tick_number, weather='fair')`** in `utils.py` is the backend source of truth for movement cost. Night adds +1 to all movement (road or not). Road rule: if both hexes `has_roads`, base is 1 + 1 at night. Otherwise base is `terrain_difficulty` + 1 at night. Weather adds: Overcast +0, Inclement +1, Extreme +2, Catastrophic returns 999 (impassable). Never inline this logic — always call `move_difficulty`. `night_bonus()` still exists for non-movement uses and returns +2.
+
+**`computeMoveCost(origin, destination, tickNumber, weather)`** in `frontend/src/utils/moveCost.ts` mirrors `move_difficulty` for the frontend. Returns `{ total, base, modifiers[], blocked }` where `modifiers` is a list of `{ label, value }` entries and `blocked` is true for catastrophic weather. Use this for all move cost display and the `tooSlow` check — do not inline the logic in components.
 
 **`Hex.has_roads`** — BooleanField (default False). Road travel between two `has_roads` hexes always costs 1 base + 1 at night. Editable via GM hex edit panel.
 
@@ -176,9 +180,20 @@ BATTLE and TRADE each have a 1-tick cooldown via `last_action`.
 
 `Party` (`models/party.py`) is the player group. It selects its own hex to move to, which triggers a world tick. All fields are manually set — no auto-tick logic. If `faction` (OneToOneField) is set, that faction's `is_player_faction` should be `True`.
 
-**Key fields**: `player_count` (number of players, default 1), `supplies` (party resource pool, default 0), `resource_generation`, `speed`, `max_speed`.
+**Key fields**: `player_count` (number of players, default 1), `supplies` (party resource pool, default 0), `resource_generation`, `speed`, `max_speed`, `is_lost` (BooleanField, default False).
 
 **Speed gating** — `POST /party/{id}/action/` with `action: 'move'` is rejected (400) if `destination.terrain_difficulty > party.speed`. The player must rest first. `action: 'rest'` resets `party.speed = party.max_speed` and counts as a full action (triggers `_run_shift`). Rest is always available.
+
+**Movement rolls (regional maps only)** — on every `move` action, `party_move_rolls(origin, destination)` in `actions.py` fires two d6 rolls:
+
+1. **Lost roll** — skipped if both hexes `has_roads` OR both hexes `has_rivers`. On a 6, `party.is_lost = True`. Party moves to the destination hex normally but must spend the terrain cost again (via `clear_lost`) before moving again.
+2. **Wilderness event roll** — always fires. Maps 1–6 to `WildernessEvent` enum (Encounter / Sign / Environment / Loss / Exhaustion / Quiet). Purely informational — no mechanical effect yet.
+
+Results are broadcast as a `type: "move_result"` SSE event so both GM and player views update in real time. `useTickStream` handles this by calling `setMoveResult` in the Zustand store.
+
+**`clear_lost` action** — `POST /party/{id}/action/` with `action: 'clear_lost'`. Deducts `current_hex.terrain_difficulty + night_bonus` from speed (floor 0), sets `is_lost = False`, publishes `type: "navigation_update"` SSE event so the GM panel updates to "On course" without a full tick invalidation. Triggers `_run_shift`.
+
+**Last Move panel** — `HexPanel` always renders a "Last Move" section above the Party footer (visible to both GM and player). Shows: Navigation (On course / Lost — with "(Skipped)" if the roll was bypassed) and Wilderness Event. Populated via the Zustand `moveResult` store key, which is set by `useTickStream` on `move_result` / `navigation_update` SSE events. Persists until overwritten by the next move.
 
 **Supply consumption** — every Morning tick (`tick.number % 3 == 0`), `_run_shift` deducts `party.player_count` from `party.supplies` (floor 0). Supply action accepts an optional `amount` int; if provided, it is added to `party.supplies` before the tick runs.
 
@@ -196,7 +211,7 @@ The GM view has two modes toggled by the **Prep / Play** button in the top bar. 
 
 **Multi-select mode** — `multiSelectMode: boolean` in Zustand, only available in prep mode. Toggled via the **Multi** button in the GM header (shows count badge when hexes are selected). In this mode hex clicks call `toggleSelectedHex` instead of `setSelectedHexId`; selected hexes render with a gold highlight. The sidebar swaps to `BulkHexPanel`, which edits `terrain_type`, `has_roads`, `has_rivers`, `player_visible`, `player_explored` across all selected hexes via `POST /api/hexes/bulk-patch/`. Checkboxes are tri-state: indeterminate = no change, checked = set true, unchecked = set false. Saving or cancelling exits multi-select mode.
 
-**Edit mode** (inside `HexPanel`) — edits `terrain_type`, `weather`, `resources`, `encounter_likelihood`, `player_explored`, `player_visible` in-place. Saved via `PATCH /api/hexes/{hex_id}/`. On save, React Query invalidates `['hexes', mapId]`. Cancel reverts draft to the current server state.
+**Edit mode** (inside `HexPanel`) — edits `terrain_type`, `resources`, `encounter_likelihood`, `player_explored`, `player_visible` in-place. Saved via `PATCH /api/hexes/{hex_id}/`. On save, React Query invalidates `['hexes', mapId]`. Cancel reverts draft to the current server state.
 
 **Add POI** — the `+ Add POI` button in edit mode opens `AddPOIModal`. Fields shown are conditional on `poi_type` (difficulty and title on dungeon; difficulty on ruin; monster_type on monster_base; description/notes on dungeon only). Age and the three visibility flags are always shown. M2M fields (`items`, `knowledge`) and the `faction` FK (village) are not editable from this modal. POI is created via `POST /api/hexes/{hex_id}/pois/`.
 
@@ -244,6 +259,13 @@ The `KnowledgePage` is a GM-only view (linked from the GMPage header). No player
 
 **Hex highlight** — `POST /api/maps/{map_id}/highlight/` with `{ hex_id: int | null }` broadcasts `type: "hex_highlight"` on the SSE channel. No DB backing — ephemeral only; state resets on page reload. `useTickStream` handles this event type by calling `setHighlightedHexId` in the Zustand store directly (no query invalidation). The GM sets/clears from `HexPanel` (per-hex) or the GMPage header "Clear highlight" button (always visible when active). `PlayerPage` zooms to show both the highlighted hex and the party hex when a highlight arrives, and back to the party hex when cleared.
 
+**SSE event types summary** — `useTickStream` handles these without full tick invalidation:
+- `gallery_update` → invalidates `['gallery', mapId]`
+- `hex_highlight` → `setHighlightedHexId` in Zustand
+- `move_result` → `setMoveResult` in Zustand (fields: `lost`, `lost_roll`, `wilderness_event`, `event_roll`)
+- `navigation_update` → patches `lost` field on existing `moveResult` in Zustand (no other fields)
+- everything else → full invalidation of map/hexes/factions/currentTick/party queries
+
 **`HexMap.focusHexIds`** — array of hex IDs to zoom to fit. Single-hex arrays use `zoomToHex` (same scale as page-load focus); multi-hex arrays use `zoomToFitHexList` (0.75× fit). This distinction is intentional — single-hex zoom should feel like the initial player load, not an extreme close-up.
 
 ---
@@ -284,7 +306,7 @@ Route: `/map/:mapId/gallery` → `GalleryPage`. Linked via "Gallery" button in t
 - "Show on map" on the Factions page selects the faction's hex but does not pan/zoom to it. Programmatic pan requires exposing the ref-based transform in `HexMap` — deferred.
 - `PlayerPage` fetches the party via `['party', mapId]` and passes `party.id` to `POST /api/party/{id}/action/`.
 - `HexPanel` accepts an optional `party` prop — renders a pinned footer with party stats (speed, hex, destination, action, resource gen). `PlayerPage` passes `factions` filtered to `selectedHex.id` (for the selected-hex view) and `partyHexFactions` filtered to `party.current_hex` (non-player factions only) — the latter renders the **Factions Present** footer with Interact buttons regardless of which hex is selected. The faction detail expand and edit form are gated behind `gmMode`. In `gmMode` the footer has an Edit button that opens an inline edit form for `player_count`, `supplies`, `speed`, `max_speed`, `resource_generation`, and `current_action`; saved via `PATCH /party/{id}/`.
-- Player view renders a **hex labels bar** (pill badges) below the hex info when `player_visible || player_explored`. Labels: terrain type, weather (both shown if `player_visible || player_explored`), Roads (if `has_roads`), Rivers (if `has_rivers`).
+- Player view renders a **hex labels bar** (pill badges) below the hex info when `player_visible || player_explored`. Labels: terrain type (shown if `player_visible || player_explored`), Roads (if `has_roads`), Rivers (if `has_rivers`). Weather is no longer per-hex — it is on `Map.weather` and displayed in the `PlayerPage` header (icon + label, to the left of Speed). The GM controls weather via a ◀/▶ cycle control in `TickControls` with a "Set" confirm button.
 - POI player-mode visibility rule is `!hidden` (not `player_visible`) — any non-hidden POI renders for the player.
 - `ActionModal` is built and wired into `PlayerPage` — opens via "Actions…" button when a hex is selected. Offers Move, Supply, Delve, Search, Social. Each action is enabled/disabled based on context (current hex vs other hex, dungeon presence). `Social` action records the tick but has no game effect.
 - GM faction action-setting modal not yet built — `next_action`, `destination`, `notes`, and `agreeableness` are now editable from the HexPanel faction expand/edit, but a dedicated modal for full faction management is not built
