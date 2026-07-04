@@ -16,6 +16,39 @@ Line numbers reference the state of the code on this date.
 
 ---
 
+## Status
+
+- [x] **C1** — `resolve_leader` deleted; `leader: str = ''` serializes directly. Done.
+- [x] **C2** — `rolls = {}` initialized once near `extra = {}`; redundant reset in the move branch removed. Done.
+- [x] **C3** — Resolved by removing the feature rather than fixing the sync: `Party.faction` and `Faction.is_player_faction` deleted entirely (user decision, broader than fix options a/b). Backend (models, `api.py`, `actions.py`, `admin.py`) and frontend (`types/index.ts`, `api/maps.ts`, `FactionsPage`, `PlayerPage`, `AddFactionModal`) updated; `CLAUDE.md` and `design_docs/HexTick.md` doc drift fixed.
+- [ ] H1 — `next_action` dispatch
+- [ ] H2 — `_select_action` priority order **[DECISION NEEDED]**
+- [ ] H3 — scouting radius mismatch
+- [ ] H4 — `reset_to_tick` partial restore
+- [ ] H5 — `duplicate_map` shared image files
+- [ ] H6 — `party_action` 500 on no `current_hex`
+- [ ] H7 — first party action on a city map 500s (`PartyTick.tick` null) — found 2026-07-04 while writing pinning tests
+- [ ] M1 — disease re-contraction double-apply
+- [ ] M2 — no stat floors
+- [ ] M3 — `update_party_tick_notes` query-param mismatch
+- [ ] M4 — SSE keepalive
+- [ ] M5 — `WorldSettings.get()` N+1 on tick
+- [ ] M6 — `useTickStream` build-breaking type
+- [ ] M7 — `create_faction` drops `notes`
+- [ ] M8 — factions with `current_hex=None` vanish **[DECISION NEEDED]**
+- [~] M9 — no automated tests — **substantially addressed 2026-07-04.** Suite now 153 tests (was 47). Added a full API pinning suite (`backend/world/tests/api/`, api.py 0%→95%) ahead of the router split, plus engine tests (`test_actions.py`, actions.py 58%→83%). `pytest-cov` added to the `test` dependency-group. Remaining gaps are the SSE stream generator, random-driven `_run_shift` event emission, deep `duplicate_map` clone branches, and `admin.py` (63%).
+- [ ] L1 — dead code inventory (8 items) **[DECISION NEEDED]** on item 7
+- [ ] L2 — faction default drift
+- [ ] L3 — frontend/backend enum drift
+- [ ] L4 — `duplicate_map` N+1 on knowledge
+- [ ] L5 — `Hex.save()` side effect
+- [ ] L6 — concurrency: lock ordering
+- [ ] L7 — `client.ts` Content-Type on GET/DELETE
+- [ ] L8 — `post_tick` day-mode broadcast (no-op note, not a fix)
+- [ ] L9 — CLAUDE.md Characters drift (partially addressed as a side effect of C3 doc cleanup — Faction-types table and Party section updated; Characters-section removal still outstanding)
+
+---
+
 ## 1. Structural analysis
 
 ### Layout and layering
@@ -27,7 +60,7 @@ Structural weaknesses, in priority order:
 1. **`_run_shift` and `party_action` live in `api.py`, not `actions.py`** ([api.py:714-773](../backend/world/api.py), [api.py:1017-1181](../backend/world/api.py)). `CLAUDE.md` states "`actions.py` is the game engine — ALL game logic" but the shift orchestration (tick creation, faction candidate filtering, party supply consumption trigger, city sub-tick logic, player-faction sync) is a ~250-line block inside the API layer. `party_action` alone is a 165-line if/elif chain mixing HTTP validation, game rules, and SSE plumbing. **Recommendation:** move `_run_shift` and per-action party logic into `actions.py` (e.g. `run_shift(map_obj)`, `perform_party_action(party, action, …) -> PartyActionOutcome`), leaving `api.py` endpoints as thin validators/serializers.
 2. **`api.py` is a 1,308-line monolith.** Django Ninja supports `Router`. **Recommendation:** split into `world/api/` package with routers: `maps.py`, `hexes.py`, `factions.py`, `knowledge.py`, `tick.py`, `party.py`, `gallery.py`, mounted from a central `api.py`. Pure mechanical move; no behavior change. Docs: https://django-ninja.dev/guides/routers/
 3. **`HexPanel.tsx` is 867 lines** with at least six responsibilities (hex view, hex edit form, POI list + detail expand, faction list + faction edit form, party footer + party edit form, Last Move panel). **Recommendation:** extract `FactionDetail`, `PartyFooter`, `HexEditForm`, `PoiList` into sibling components under `components/HexPanel/`.
-4. **Zero automated tests** in the repository (no `test*.py`, no `*.test.ts*`). The tick engine (`_select_action`, diseases, battle/trade math, `move_difficulty`, `hex_distance`) is pure-ish and highly testable. **Recommendation:** add `backend/world/tests/` with Django `TestCase` coverage for: `hex_distance` axial conversion, `move_difficulty` (road/night/weather matrix), `_select_action` priority order, disease apply/expire round-trip, `reset_to_tick` round-trip. This is the highest-leverage quality investment available and a prerequisite for safely fixing H2/H3.
+4. **Automated tests** — originally zero; as of 2026-07-04 the backend has a 153-test pytest suite (`backend/world/tests/`) covering the tick engine (`test_actions.py`) and all `api.py` endpoints (`tests/api/`, api.py 0%→95%). See M9 for the full inventory. The API tests are deliberately **characterization/pinning** tests written ahead of the router split (structural item 2) — they lock current behavior, bugs included, so the split can be verified as behavior-preserving. The frontend still has no `*.test.ts*`. Remaining backend gaps: `admin.py` (63%), the SSE stream, and random-driven `_run_shift` event emission.
 5. **No authentication on any endpoint.** GM endpoints (tick, reset, hex edit, fog control) are callable by anyone who can reach port 8000 — including players, since the player view runs on the same host. Acceptable for trusted local play; see M-11 for a cheap mitigation if desired.
 6. **`design_docs/` drift**: `CLAUDE.md` documents a Characters feature (`Character`, `CharacterTick`, `Item` models, `tick_character`, `update_character_visibility`, `CharactersPage`, `/map/:mapId/characters` route, `GET/POST /maps/{map_id}/characters/`) that was deleted in migration 0030. None of it exists in code. See L-9.
 
@@ -47,6 +80,7 @@ Structural weaknesses, in priority order:
 
 #### C1 — `FactionSchema.resolve_leader` reads a nonexistent `leader_id` attribute **[VERIFY FIRST]**
 
+- **Status:** Done
 - **Severity:** Critical
 - **File:** [backend/world/api.py:507-509](../backend/world/api.py)
 
@@ -70,6 +104,7 @@ raises `AttributeError` when the schema serializes, which would 500 every `GET /
 
 #### C2 — `UnboundLocalError` on `rolls` for supply/rest actions on city maps
 
+- **Status:** Done
 - **Severity:** Critical
 - **File:** [backend/world/api.py:1085-1094](../backend/world/api.py) (supply), [api.py:1112-1119](../backend/world/api.py) (rest), crash site [api.py:1177](../backend/world/api.py)
 
@@ -87,6 +122,7 @@ Line 1177 then evaluates `if body.action in ('move', 'supply', 'rest') and rolls
 
 #### C3 — Player-faction sync after a move can teleport the party back to its old hex **[VERIFY FIRST]** **[DECISION NEEDED]**
 
+- **Status:** Done — resolved by removing `Party.faction`/`Faction.is_player_faction` entirely rather than fix option (a) or (b) below (user decision). Migration pending.
 - **Severity:** Critical (silent state corruption) — downgrade to High if no party has a linked faction in practice
 - **File:** [backend/world/api.py:1051-1054](../backend/world/api.py) and [api.py:1162-1165](../backend/world/api.py)
 
@@ -208,6 +244,23 @@ For `search`/`supply`/`social`/`rest` with `party.current_hex = None`: `map_id` 
 
 ---
 
+#### H7 — First party action on a city map 500s because `PartyTick.tick` is null
+
+- **Severity:** High (unhandled 500 on a normal first action; found 2026-07-04 while writing pinning tests — not in the original review)
+- **File:** [backend/world/api.py:1126-1149](../backend/world/api.py) (`party_action` sub-tick path), [api.py:990-1002](../backend/world/api.py) (`_create_party_tick`), [backend/world/models/ticks.py](../backend/world/models/ticks.py) (`PartyTick.tick` FK)
+
+On a **city map**, the first party action is a mid-shift sub-tick: `map_obj.sub_tick` goes 0→1, so `is_shift` is False and `_run_shift` never runs. On a freshly created map `map_obj.current_tick` is still `None` (no `Tick` rows exist yet), so `tick = map_obj.current_tick` is `None`. `_create_party_tick(party, tick=None, …)` then does `PartyTick.objects.update_or_create(tick=None, …)`; `PartyTick.tick` is a non-null FK → `IntegrityError: NOT NULL constraint failed: world_partytick.tick_id` → 500, rolling back the action. Regional maps are unaffected (every action runs a shift, creating the tick first).
+
+**Verify:** on a `map_type='city'` map with no ticks, `POST /api/party/{id}/action/` with `{"action": "supply"}` returns 500. Pinned by `backend/world/tests/api/test_party.py::TestCityMapActions::test_first_action_on_fresh_city_map_500` (characterization — expects the current 500).
+
+**Fix (choose one):**
+- **(a) Guarantee a tick before sub-tick actions** — when a city map's first action fires mid-shift with no `current_tick`, run/seed the shift so a `Tick` exists (or seed tick 0/1 at map creation). Keeps `PartyTick.tick` non-null.
+- **(b) Make `PartyTick.tick` nullable** (model change → **user runs migrations**) and handle null downstream in the tick-state/history lookups. Broader blast radius; not recommended.
+
+**Acceptance:** the first `supply`/`rest` action on a fresh city map returns 200 and records a `PartyTick`; rewrite the pinning test to assert 200.
+
+---
+
 ### MEDIUM
 
 ---
@@ -318,12 +371,22 @@ The inline type for `parsed` declares `type/hex_id/lost/lost_roll/wilderness_eve
 
 #### M9 — No automated tests
 
+- **Status:** Substantially addressed (2026-07-04). Scaffolding uses **pytest + pytest-django** (not `manage.py test` — user preference); config in root `pyproject.toml`, run via `pdm run test`. `pytest-cov` is now in the `test` dependency-group; coverage: **api.py 0%→95%, actions.py 58%→83%, suite 47→153 tests.** Tests:
+  - `test_engine.py` — `hex_distance`, `move_difficulty` matrix.
+  - `test_faction_stats.py` — `modifier()`, `Faction.comfort()`.
+  - `test_diseases.py` — `_apply_disease`/`_expire_disease` round-trips + the M1 re-contraction pin.
+  - `test_select_action.py` — top of the `_select_action` priority chain.
+  - **`test_actions.py`** (new) — the previously-missing engine branches: `_select_action` detour / hostile-steer / outmatched-flee / recent-battle arms, `travel` speed-fallback, `trade`, `battle` (traveler branch + the **M2 negative-stat pin**), `train`/`craft`/`delve`/`merge`, `random_encounter` buckets, and `tick_faction` daily/weekly/death. Randomness pinned per test.
+  - **`tests/api/`** (new package) — end-to-end pinning tests for all 30 `api.py` endpoints, grouped by resource to mirror the planned router split (`test_maps`/`test_hexes`/`test_factions`/`test_knowledge`/`test_tick`/`test_party`/`test_gallery`). Harness in `tests/api/conftest.py` (see below). These pin **current** behavior including the known bugs, so the router split can be verified as behavior-preserving; tests encoding bugs are marked `CHARACTERIZATION — pins <id>` (H4/H5/H6/H7/M3/M7/M8, plus H2/M2 in the engine) and must be rewritten when each fix lands — same convention as the M1 pin.
+  - `tests/conftest.py` / `tests/api/conftest.py` — shared `map_factory`/`hex_factory`/`faction_factory` DB fixtures; the api-level conftest overrides `map_factory` (non-empty `image`), replaces `world.api._redis` with a recording fake, and wraps `django.test.Client` for JSON.
+
+  Remaining gaps: SSE stream generator, random-driven `_run_shift` event emission, deep `duplicate_map` clone branches, `admin.py` (63%). H2's delve/craft/train tail is pinned as *unreachable* (characterization) rather than exercised, pending the H2 reorder.
 - **Severity:** Medium (process; prerequisite for H2/H3/M1/M2)
-- **Files:** none exist
+- **Files:** `backend/world/tests/`
 
-See structural analysis §1.4. **Fix:** create `backend/world/tests/test_engine.py` covering, at minimum: `hex_distance` known pairs (odd-q offset cases), `move_difficulty` full matrix (road/no-road × day/night × 5 weathers), `modifier`, `comfort` with/without restless, disease apply→expire round-trip, `travel` speed-fallback, `battle` clamping (after M2), and one end-to-end `_run_shift` smoke test on an in-memory map. Use `USE_SQLITE=true`. Run with `pdm run python manage.py test world`.
+See structural analysis §1.4. Original fix note (superseded by the pytest choice above): create `backend/world/tests/test_engine.py` covering, at minimum: `hex_distance` known pairs (odd-q offset cases), `move_difficulty` full matrix (road/no-road × day/night × 5 weathers), `modifier`, `comfort` with/without restless, disease apply→expire round-trip, `travel` speed-fallback, `battle` clamping (after M2), and one end-to-end `_run_shift` smoke test on an in-memory map. Use `USE_SQLITE=true`.
 
-**Acceptance:** `pdm run python manage.py test world` passes; the H2/H3 fixes each land with a pinning test.
+**Acceptance:** `pdm run test` passes; the H2/H3 fixes each land with a pinning test.
 
 ---
 

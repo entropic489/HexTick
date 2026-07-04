@@ -9,6 +9,7 @@ export function useTickStream(mapId: number) {
   const qc = useQueryClient();
   const setHighlightedHexId = useGameStore((s) => s.setHighlightedHexId);
   const setMoveResult = useGameStore((s) => s.setMoveResult);
+  const recordMoveResult = useGameStore((s) => s.recordMoveResult);
   const moveResultRef = useRef<MoveResult | null>(useGameStore.getState().moveResult);
 
   useEffect(() => {
@@ -20,7 +21,7 @@ export function useTickStream(mapId: number) {
     const es = new EventSource(url);
 
     es.onmessage = (e) => {
-      let parsed: { type?: string; hex_id?: number | null; lost?: boolean; lost_roll?: number | null; wilderness_event?: string; event_roll?: number } | undefined;
+      let parsed: { type?: string; hex_id?: number | null; action?: string; lost?: boolean; lost_roll?: number | null; wilderness_event?: string; event_roll?: number; weather_before?: string; weather_after?: string } | undefined;
       try { parsed = JSON.parse(e.data); } catch { /* tick events have no type */ }
       const type = parsed?.type;
 
@@ -40,12 +41,14 @@ export function useTickStream(mapId: number) {
       }
 
       if (type === 'move_result' && parsed?.wilderness_event !== undefined) {
-        setMoveResult({
+        recordMoveResult({
           action: parsed.action ?? 'move',
           lost: parsed.lost ?? null,
           lost_roll: parsed.lost_roll ?? null,
           wilderness_event: parsed.wilderness_event,
           event_roll: parsed.event_roll ?? 0,
+          weather_before: parsed.weather_before,
+          weather_after: parsed.weather_after,
         });
         return;
       }
@@ -58,5 +61,5 @@ export function useTickStream(mapId: number) {
     };
 
     return () => es.close();
-  }, [mapId, qc, setHighlightedHexId, setMoveResult]);
+  }, [mapId, qc, setHighlightedHexId, setMoveResult, recordMoveResult]);
 }

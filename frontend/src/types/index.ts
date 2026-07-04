@@ -65,7 +65,6 @@ export interface Faction {
   current_hex: number | null;
   destination: number | null;
   is_mobile: boolean;
-  is_player_faction: boolean;
   is_gm_faction: boolean;
   is_famine: boolean;
   is_dying: boolean;
@@ -100,7 +99,6 @@ export interface Party {
   id: number;
   name: string;
   map: number | null;
-  faction: number | null;
   player_count: number;
   speed: number;
   max_speed: number;
@@ -156,4 +154,7 @@ export interface PartyActionResponse {
   lost_roll?: number | null;
   wilderness_event?: string;
   event_roll?: number;
+  weather_roll?: number;
+  weather_before?: string;
+  weather_after?: string;
 }

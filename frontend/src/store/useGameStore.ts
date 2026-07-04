@@ -7,6 +7,8 @@ export interface MoveResult {
   lost_roll: number | null;
   wilderness_event: string;
   event_roll: number;
+  weather_before?: string;
+  weather_after?: string;
 }
 
 interface GameStore {
@@ -44,6 +46,11 @@ interface GameStore {
 
   moveResult: MoveResult | null;
   setMoveResult: (result: MoveResult) => void;
+
+  // Bumped only when a full move_result event arrives (move/supply/rest),
+  // not on navigation_update patches — lets PlayerPage detect "new result to pop up" separately from "result changed".
+  moveResultSeq: number;
+  recordMoveResult: (result: MoveResult) => void;
 }
 
 export const useGameStore = create<GameStore>((set) => ({
@@ -94,4 +101,7 @@ export const useGameStore = create<GameStore>((set) => ({
 
   moveResult: null,
   setMoveResult: (result) => set({ moveResult: result }),
+
+  moveResultSeq: 0,
+  recordMoveResult: (result) => set((s) => ({ moveResult: result, moveResultSeq: s.moveResultSeq + 1 })),
 }));

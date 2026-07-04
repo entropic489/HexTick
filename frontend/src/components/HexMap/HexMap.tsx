@@ -133,7 +133,10 @@ export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fa
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusHex]);
 
-  // Zoom to show all focusHexIds whenever the list changes.
+  // Zoom to show focusHexIds when a GM highlight is set or cleared — NOT on
+  // party movement. focusHexIds includes the party hex, so keying this off
+  // that array (instead of highlightedHexId) re-centers the camera on every
+  // party move, fighting the player's own pan/zoom.
   useEffect(() => {
     if (!focusHexIds || focusHexIds.length === 0 || !fitted.current) return;
     const el = containerRef.current;
@@ -146,7 +149,7 @@ export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fa
       zoomToFitHexList(targets, el.clientWidth, el.clientHeight);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusHexIds]);
+  }, [highlightedHexId]);
 
   // ResizeObserver for first render when container has no size yet.
   useEffect(() => {

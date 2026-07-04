@@ -1,0 +1,77 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+
+.modal {
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 1.25rem;
+  width: 320px;
+  max-width: 95vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  margin: 0;
+  font-size: 1rem;
+  color: #cdd6f4;
+}
+
+.close {
+  background: none;
+  border: none;
+  color: #6c7086;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.close:hover { color: #cdd6f4; }
+
+.stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 0.75rem;
+  margin: 0;
+}
+
+.stats dt { color: #6c7086; }
+.stats dd { color: #cdd6f4; margin: 0; }
+
+.lostValue { color: #f38ba8 !important; font-weight: 600; }
+.safeValue { color: #a6e3a1 !important; font-weight: 600; }
+.skippedNote { font-weight: 400; color: #6c7086; font-size: 0.78rem; }
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.closeBtn {
+  padding: 0.35rem 0.85rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border: 1px solid #45475a;
+  background: none;
+  color: #6c7086;
+}
+
+.closeBtn:hover { border-color: #cdd6f4; color: #cdd6f4; }

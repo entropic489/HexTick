@@ -176,7 +176,6 @@ The party is its own thing. It selects its own tiles to move to, which Ticks the
 | ------------------- | -------------------------------------------------------------------------------------------- |
 | Characters          | players and their pickups                                                                    |
 | Name                | The party gets a name!                                                                       |
-| Faction             | usually empty unless they join a faction. If they do, that faction.is_player_faction == true |
 | speed               | how far they can move                                                                        |
 | max_speed           | how far they can move per day                                                                |
 | resource_generation | how much they can loot                                                                       |

@@ -21,7 +21,6 @@ interface Draft {
   combat_skill: number;
   current_hex: number | null;
   is_mobile: boolean;
-  is_player_faction: boolean;
   is_gm_faction: boolean;
   agreeableness: number;
 }
@@ -36,7 +35,6 @@ const DEFAULT_DRAFT: Draft = {
   combat_skill: 5,
   current_hex: null,
   is_mobile: true,
-  is_player_faction: false,
   is_gm_faction: false,
   agreeableness: 0,
 };
@@ -158,11 +156,6 @@ export function AddFactionModal({ mapId, hexes, defaultHexId, onClose }: Props) 
               <input type="checkbox" checked={draft.is_gm_faction}
                 onChange={(e) => set('is_gm_faction', e.target.checked)} />
               GM faction
-            </label>
-            <label className={styles.checkLabel}>
-              <input type="checkbox" checked={draft.is_player_faction}
-                onChange={(e) => set('is_player_faction', e.target.checked)} />
-              Player faction
             </label>
           </div>
         </div>

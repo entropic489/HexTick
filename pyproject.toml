@@ -23,3 +23,16 @@ distribution = false
 
 [tool.pdm.scripts]
 makemigrations = {shell = "set -a && . ./.env && set +a && python backend/manage.py makemigrations"}
+test = {shell = "set -a && . ./.env && set +a && USE_SQLITE=true pytest"}
+
+[dependency-groups]
+test = [
+    "pytest>=9.1.1",
+    "pytest-django>=4.12.0",
+    "pytest-cov>=6.0.0",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "HexTick.settings"
+pythonpath = ["backend"]
+testpaths = ["backend/world/tests"]

@@ -55,7 +55,6 @@ export interface CreateFactionParams {
   current_hex?: number | null;
   destination?: number | null;
   is_mobile: boolean;
-  is_player_faction: boolean;
   is_gm_faction: boolean;
 }
 
@@ -73,7 +72,6 @@ export interface PatchFactionParams {
   current_hex?: number | null;
   destination?: number | null;
   is_mobile?: boolean;
-  is_player_faction?: boolean;
   is_gm_faction?: boolean;
   agreeableness?: number;
   theology?: number;

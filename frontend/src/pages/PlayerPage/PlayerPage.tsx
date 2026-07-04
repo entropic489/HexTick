@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { getMap, getHexes, getFactions, getParty } from '../../api/maps';
@@ -8,6 +8,7 @@ import { HexMap } from '../../components/HexMap/HexMap';
 import { HexPanel } from '../../components/HexPanel/HexPanel';
 import { EventLog } from '../../components/EventLog/EventLog';
 import { ActionList } from '../../components/ActionList/ActionList';
+import { LastActionResultModal } from '../../components/LastActionResultModal/LastActionResultModal';
 import { TimeOfDayBadge } from '../../components/TimeOfDayBadge/TimeOfDayBadge';
 import { WeatherIcon } from '../../components/WeatherIcon/WeatherIcon';
 import { ShiftActionsIndicator } from '../../components/ShiftActionsIndicator/ShiftActionsIndicator';
@@ -22,8 +23,20 @@ export function PlayerPage() {
   const selectedHexId = useGameStore((s) => s.selectedHexId);
   const setSelectedHexId = useGameStore((s) => s.setSelectedHexId);
   const highlightedHexId = useGameStore((s) => s.highlightedHexId);
+  const moveResult = useGameStore((s) => s.moveResult);
+  const moveResultSeq = useGameStore((s) => s.moveResultSeq);
 
   useTickStream(id);
+
+  // Pop the result modal only on a genuinely new action result, not on mount/remount.
+  const [actionResultModalOpen, setActionResultModalOpen] = useState(false);
+  const seenMoveResultSeq = useRef(moveResultSeq);
+  useEffect(() => {
+    if (moveResultSeq !== seenMoveResultSeq.current) {
+      seenMoveResultSeq.current = moveResultSeq;
+      setActionResultModalOpen(true);
+    }
+  }, [moveResultSeq]);
 
   const { data: map } = useQuery({ queryKey: ['map', id], queryFn: () => getMap(id) });
   const { data: hexes = [] } = useQuery({ queryKey: ['hexes', id], queryFn: () => getHexes(id) });
@@ -44,7 +57,7 @@ export function PlayerPage() {
   const publishedImage = gallery.find((img) => img.is_published) ?? null;
   const selectedHex = hexes.find((h) => h.id === selectedHexId) ?? null;
   const partyHexFactions = party?.current_hex != null
-    ? factions.filter((f) => f.current_hex === party.current_hex && !f.is_player_faction)
+    ? factions.filter((f) => f.current_hex === party.current_hex)
     : [];
 
   if (!map) return <div className={styles.status}>Loading…</div>;
@@ -139,6 +152,10 @@ export function PlayerPage() {
         <div className={styles.imageOverlay}>
           <img className={styles.overlayImage} src={publishedImage.image} alt={publishedImage.name} />
         </div>
+      )}
+
+      {actionResultModalOpen && moveResult && (
+        <LastActionResultModal result={moveResult} onClose={() => setActionResultModalOpen(false)} />
       )}
 
     </div>

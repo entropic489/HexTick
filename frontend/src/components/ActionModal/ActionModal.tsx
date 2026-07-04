@@ -114,6 +114,8 @@ export function ActionModal({ party, selectedHex, originHex, mapId, tickNumber, 
           lost_roll: data.lost_roll ?? null,
           wilderness_event: data.wilderness_event,
           event_roll: data.event_roll ?? 0,
+          weather_before: data.weather_before,
+          weather_after: data.weather_after,
         });
       }
       onSuccess();

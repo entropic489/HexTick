@@ -151,7 +151,6 @@ function FactionRow({
       agreeableness: faction.agreeableness,
       theology: faction.theology,
       is_mobile: faction.is_mobile,
-      is_player_faction: faction.is_player_faction,
       is_gm_faction: faction.is_gm_faction,
       knowledge: faction.knowledge,
       leader: faction.leader,
@@ -193,7 +192,6 @@ function FactionRow({
         )}
 
         <span className={styles.badges}>
-          {faction.is_player_faction && <span className={styles.badge}>Player</span>}
           {faction.is_gm_faction && <span className={styles.badge}>GM</span>}
           {faction.is_famine && <span className={`${styles.badge} ${styles.badgeDanger}`}>Famine</span>}
           {faction.is_dying && <span className={`${styles.badge} ${styles.badgeDanger}`}>Dying</span>}
@@ -240,7 +238,6 @@ function FactionRow({
         {editing && (
           <span className={styles.flags}>
             <label><input type="checkbox" checked={d.is_mobile ?? true} onChange={(e) => setDraft((p) => ({ ...p, is_mobile: e.target.checked }))} /> Mobile</label>
-            <label><input type="checkbox" checked={d.is_player_faction ?? false} onChange={(e) => setDraft((p) => ({ ...p, is_player_faction: e.target.checked }))} /> Player</label>
             <label><input type="checkbox" checked={d.is_gm_faction ?? false} onChange={(e) => setDraft((p) => ({ ...p, is_gm_faction: e.target.checked }))} /> GM</label>
           </span>
         )}

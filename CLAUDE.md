@@ -25,11 +25,22 @@ docker-compose up      # backend: :8000, frontend: :5173
 
 For one-off management commands outside Docker:
 ```bash
-cd backend && pdm run <command>   # e.g. pdm run makemigrations, pdm run migrate
+cd backend && pdm run <command>   # e.g. pdm run makemigrations, pdm run migrate, pdm run test
 ```
 
 After changing `pyproject.toml`, rebuild: `docker-compose up --build`.
 After changing frontend `package.json`, run `npm install` in `frontend/` locally (node_modules are not installed in the container image).
+
+**On this dev machine, `pdm` is not on the Windows host or reachable from a Claude Code Bash tool call.** The Bash tool here runs Git-Bash/MSYS2 (`MINGW64`), which has no `pdm` or `python3.13` on PATH, and the Windows host itself only has Python 3.11/3.12 installed (the project pins `requires-python = "==3.13.*"`). The actual PDM project — with a pdm-managed Python 3.13 interpreter already provisioned — lives inside the WSL distro **`Ubuntu-22.04`**, which mounts this repo at `/mnt/c/Users/jfink/OneDrive/Documents/Projects/HexTick`. Run pdm/pytest commands via PowerShell:
+```powershell
+wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/c/Users/jfink/OneDrive/Documents/Projects/HexTick && pdm run test"
+```
+The running `hextick-web-1` Docker container also has `pdm` installed (`docker exec hextick-web-1 pdm ...`) as a fallback if WSL isn't available.
+
+**`node`/`npm`/`npx` are not on the Windows host or reachable from a Claude Code Bash tool call either** (Git-Bash/MSYS2 has none of them on PATH, and PowerShell finds no `node`/`npm` command on this machine). Run frontend commands (`npx tsc --noEmit`, etc.) inside the running `hextick-frontend-1` container, which has `node_modules` already installed:
+```powershell
+docker exec hextick-frontend-1 npx tsc --noEmit
+```
 
 ## Project layout
 
@@ -72,6 +83,21 @@ After changing frontend `package.json`, run `npm install` in `frontend/` locally
 - Admin static files (`/static/admin/…`) require `staticfiles_urlpatterns()` in `urls.py` (under `if settings.DEBUG`) because the backend runs under **gunicorn**, which does not auto-serve static files the way `manage.py runserver` does. `STATIC_ROOT = BASE_DIR / 'staticfiles'`; `collectstatic` runs in `backend-entrypoint.sh`.
 - `map.image` is serialized by Django as the full `/media/maps/foo.png` path (not just the relative part). Use it directly as an `<img src>` or SVG `<image href>` — do not prepend `/media/` again.
 - Vite proxies both `/api` and `/media` to the backend (`vite.config.ts`).
+
+## Testing
+
+Backend tests use **pytest + pytest-django**, not `manage.py test`. Config lives in root `pyproject.toml` (`[tool.pytest.ini_options]`): `DJANGO_SETTINGS_MODULE`, `pythonpath = ["backend"]`, `testpaths = ["backend/world/tests"]`. `pytest`, `pytest-django`, and `pytest-cov` are in the `test` PDM dependency-group (`[dependency-groups]`), not the main `dependencies` list.
+
+Run via `pdm run test` (a `[tool.pdm.scripts]` entry) — this sources `.env` then forces `USE_SQLITE=true` regardless of what `.env` has for the Postgres vars, since `.env`'s `DB_HOST=db` only resolves inside Docker Compose. Add coverage with `pdm run test --cov=world --cov-report=term-missing` (the `world` package is on `pythonpath`).
+
+Engine tests live in `backend/world/tests/`. `conftest.py` provides DB-backed factory fixtures (`map_factory`, `hex_factory`, `faction_factory`) — each creates the minimal valid instance and lets kwargs override fields; factories build their own dependency (e.g. `hex_factory` makes a `map_factory()` if none is passed). Note `max_speed`, `combat_skill_max`, `resource_generation`, `population_trend` on `Faction` are **read-only computed properties** — never pass them to a factory/create.
+
+**API tests live in `backend/world/tests/api/`** — one module per resource (`test_maps`/`test_hexes`/`test_factions`/`test_knowledge`/`test_tick`/`test_party`/`test_gallery`), grouped to mirror the planned router split (`design_docs/code-review.md` §1.2) so each file can move next to its router. They are **pinning/characterization tests** locking current behavior so that split is verifiable as behavior-preserving. Harness in `tests/api/conftest.py`:
+- Drives the real Django URLconf (`/api/...`) via a `django.test.Client` JSON wrapper (`client` fixture) constructed with `raise_request_exception=False`, so known-crash paths (H6/H7) can be pinned by status code (500) instead of raising. Use `.post_multipart(...)` for the `File`/`Form` endpoints (`create_map`, gallery upload).
+- Replaces module-level `world.api._redis` with a **recording fake** (autouse `fake_redis`), since some endpoints publish synchronously (`locked`/`weather`/`highlight`/gallery `publish`) while `on_commit` broadcasts stay silent under the rolled-back test transaction (use `django_capture_on_commit_callbacks(execute=True)` to force + assert those).
+- **Overrides `map_factory`** to give maps a non-empty `image` name — `MapSchema.image` is typed `str` and Ninja's `FieldFile` encoder returns `None` for an empty `ImageField` (a 500 on serialize). This override flows into `hex_factory`/`faction_factory` too.
+
+Some tests intentionally **pin current, known-buggy behavior** documented in `design_docs/code-review.md` rather than the intended behavior — marked with a `CHARACTERIZATION — pins <id>` comment (H2/H4/H5/H6/H7/M1/M2/M3/M7/M8). Expect each to need rewriting the moment its finding is fixed, not to stay green forever (e.g. the M1 pin in `test_diseases.py::test_recontraction_before_expiry_reapplies_stat_effect`).
 
 ## Hard rules
 
@@ -153,7 +179,6 @@ Frontend store keys: `factionHexSelectMode`, `factionAllowedHexIds`, `setFaction
 
 | Flag | Auto-tick | Notes |
 |---|---|---|
-| `is_player_faction = True` | No | `current_action` must be set before tick runs |
 | `is_gm_faction = True` | No | GM sets action via frontend modal |
 | neither | Yes | `_select_action` runs each tick |
 
@@ -178,7 +203,7 @@ BATTLE and TRADE each have a 1-tick cooldown via `last_action`.
 
 ## Party
 
-`Party` (`models/party.py`) is the player group. It selects its own hex to move to, which triggers a world tick. All fields are manually set — no auto-tick logic. If `faction` (OneToOneField) is set, that faction's `is_player_faction` should be `True`.
+`Party` (`models/party.py`) is the player group. It selects its own hex to move to, which triggers a world tick. All fields are manually set — no auto-tick logic. `Party` has no link to `Faction`.
 
 **Key fields**: `player_count` (number of players, default 1), `supplies` (party resource pool, default 0), `resource_generation`, `speed`, `max_speed`, `is_lost` (BooleanField, default False).
 
@@ -299,7 +324,7 @@ Route: `/map/:mapId/gallery` → `GalleryPage`. Linked via "Gallery" button in t
 - No API endpoint to edit or delete existing POIs — use Django admin for that
 
 **Backend**
-- `FactionTick` does not snapshot `last_action`, `next_action`, `notes`, `is_gm_faction`, or `is_player_faction`
+- `FactionTick` does not snapshot `last_action`, `next_action`, `notes`, or `is_gm_faction`
 - `update_character_visibility()` is not called anywhere in the tick flow — needs a home in step 6 of `_run_shift`
 
 **Frontend**
