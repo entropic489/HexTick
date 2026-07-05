@@ -22,7 +22,7 @@ Structural items track the §1 "Structural analysis" list (S1–S6 map to its si
 
 - [x] S1 — `_run_shift`/`party_action` game logic lives in the API layer, not `actions.py` (relates to H1). **Done 2026-07-05:** `run_shift()` + `perform_party_action()` (raising `PartyActionError`) moved to `actions.py`; the `tick.py`/`party.py` routers are now thin validate/serialize + SSE-plumbing wrappers. Behavior-preserving (153 tests green unchanged).
 - [x] S2 — `api.py` monolith → `world/api/` router package. **Done 2026-07-05:** `common.py` + `maps`/`hexes`/`factions`/`knowledge`/`tick`/`party`/`gallery` routers mounted at `/` in `__init__.py`; behavior-preserving (153 tests green, only the conftest redis-patch target moved to `world.api.common._redis`). `_run_shift` stayed in `tick.py` — that relocation is S1.
-- [ ] S3 — `HexPanel.tsx` (867 lines) → extract `FactionDetail`/`PartyFooter`/`HexEditForm`/`PoiList`
+- [x] S3 — `HexPanel.tsx` (867 lines) → extract `FactionDetail`/`PartyFooter`/`HexEditForm`/`PoiList`
 - [~] S4 — automated tests (see M9; substantially addressed, gaps remain)
 - [ ] S5 — `design_docs`/CLAUDE.md drift re: deleted Characters feature (see L9)
 - [x] **C1** — `resolve_leader` deleted; `leader: str = ''` serializes directly. Done.
