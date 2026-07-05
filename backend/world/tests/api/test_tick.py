@@ -37,7 +37,7 @@ class TestPostTick:
 
     def test_shift_with_movement_restricted_faction(self, client, map_factory,
                                                      hex_factory, faction_factory):
-        # Exercises the _run_shift candidate-filtering branch for a non-GM,
+        # Exercises the run_shift candidate-filtering branch for a non-GM,
         # movement_restricted faction (allowed_hexes gate).
         m = map_factory()
         a = hex_factory(map=m, row=0, col=0)

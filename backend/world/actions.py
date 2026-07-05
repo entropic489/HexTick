@@ -3,12 +3,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .models.faction import Faction, Action, DiseaseType, ActiveDisease
-from .models.hex import Hex
+from .models.hex import Hex, PointOfInterest
 from .models.party import Party
-from .models.ticks import Tick, HexTick, FactionTick
+from .models.ticks import Tick, HexTick, FactionTick, PartyTick
 from .models.settings import WorldSettings
-from .models.world import Map, WeatherType
-from .utils import modifier, hex_distance, night_bonus, move_difficulty
+from .models.world import Map, MapType, WeatherType
+from .utils import modifier, hex_distance, adjacent_hexes, night_bonus, move_difficulty
 
 
 class WildernessEvent(StrEnum):
@@ -289,7 +289,6 @@ def tick_faction(
 
 
 def reveal_hex_on_move(destination: Hex, all_map_hexes: list[Hex]) -> None:
-    from world.utils import adjacent_hexes
     adjacent_ids = {h.id for h in adjacent_hexes(destination, all_map_hexes)}
     Hex.objects.filter(id__in=(adjacent_ids | {destination.id})).update(player_visible=True)
     Hex.objects.filter(id=destination.id).update(player_explored=True)
@@ -322,6 +321,72 @@ def tick_hex(hex: Hex, tick: Tick) -> HexTick:
         player_explored=hex.player_explored,
         player_visible=hex.player_visible,
     )
+
+
+# --- Shift orchestration ---
+
+def run_shift(map_id: int) -> tuple[int, list[dict]]:
+    """Advance a map one shift: create the next Tick, tick every hex/faction/party,
+    and return (tick_number, events). Takes a row lock on the map."""
+    map_obj = Map.objects.select_for_update().get(id=map_id)
+    latest = map_obj.current_tick.number if map_obj.current_tick else 0
+    tick = Tick.objects.create(map=map_obj, number=latest + 1)
+    map_obj.current_tick = tick
+    map_obj.save(update_fields=['current_tick'])
+
+    hexes = list(Hex.objects.filter(map_id=map_id).prefetch_related('pois'))
+    factions = list(Faction.objects.filter(current_hex__map_id=map_id, is_dead=False).prefetch_related('diseases', 'allowed_hexes'))
+
+    for hex in hexes:
+        tick_hex(hex, tick)
+
+    faction_ticks = []
+    for faction in factions:
+        nearby = [
+            f for f in factions
+            if f.id != faction.id
+            and f.current_hex
+            and faction.current_hex
+            and hex_distance(faction.current_hex, f.current_hex) <= modifier(faction.scouting)
+        ]
+        candidates = adjacent_hexes(faction.current_hex, hexes) if faction.current_hex else []
+        if faction.movement_restricted and not faction.is_gm_faction:
+            allowed_ids = {h.id for h in faction.allowed_hexes.all()}
+            candidates = [h for h in candidates if h.id in allowed_ids]
+        ft = tick_faction(faction, tick, nearby, candidates, map_obj.weather)
+        faction_ticks.append((faction, ft))
+
+    try:
+        party = Party.objects.get(map_id=map_id)
+        tick_party(party, tick)
+    except Party.DoesNotExist:
+        pass
+
+    events = []
+    for faction, ft in faction_ticks:
+        if ft.action == 'battle':
+            events.append({
+                'type': 'battle',
+                'message': f"{faction.name} fought (roll: {ft.dice_roll})",
+                'faction_id': faction.id,
+                'hex_id': ft.current_hex_id,
+            })
+        if faction.is_famine:
+            events.append({
+                'type': 'famine',
+                'message': f"{faction.name} is starving",
+                'faction_id': faction.id,
+                'hex_id': ft.current_hex_id,
+            })
+        if faction.is_dying:
+            events.append({
+                'type': 'death',
+                'message': f"{faction.name} is collapsing (pop < 20, trend < 0)",
+                'faction_id': faction.id,
+                'hex_id': ft.current_hex_id,
+            })
+
+    return tick.number, events
 
 
 # --- Faction ---
@@ -576,5 +641,211 @@ def delve(faction: Faction, dungeon) -> ActionResult:
         dice_roll=roll,
         success=success,
         notes=f"rolled {total} vs difficulty {dungeon.difficulty}",
+    )
+
+
+# --- Party actions ---
+
+class PartyActionError(Exception):
+    """Raised for a rejected party action. The API layer converts it to an HTTP response."""
+
+    def __init__(self, detail: str, status: int = 400):
+        super().__init__(detail)
+        self.detail = detail
+        self.status = status
+
+
+@dataclass
+class PartyActionOutcome:
+    tick_number: int
+    events: list[dict]
+    party_tick: PartyTick
+    map_id: int | None
+    extra: dict
+    # SSE messages the API layer should publish on commit (in addition to the tick broadcast).
+    sse_messages: list[dict]
+
+
+def _create_party_tick(party: Party, tick, action, sub_tick: int = 0) -> PartyTick:
+    pt, _ = PartyTick.objects.update_or_create(
+        tick=tick,
+        party=party,
+        defaults=dict(
+            current_hex=party.current_hex,
+            destination=party.destination,
+            action=action,
+            last_action=party.last_action,
+            sub_tick=sub_tick,
+        ),
+    )
+    return pt
+
+
+def perform_party_action(
+    party: Party,
+    action: str,
+    *,
+    hex_id: int | None = None,
+    poi_id: int | None = None,
+    amount: int | None = None,
+) -> PartyActionOutcome:
+    """Apply a party action, advance the world if the action closes a shift, and snapshot
+    a PartyTick. Raises PartyActionError for rejected actions; SSE side effects are returned
+    on the outcome for the API layer to publish on commit."""
+    from django.shortcuts import get_object_or_404
+
+    map_id = party.current_hex.map_id if party.current_hex else None
+    extra: dict = {}
+    rolls: dict = {}
+    sse_messages: list[dict] = []
+
+    if action == 'move':
+        if not hex_id:
+            raise PartyActionError('hex_id required for move.')
+        destination = get_object_or_404(Hex, id=hex_id)
+        if not party.current_hex or destination.map_id != party.current_hex.map_id:
+            raise PartyActionError('Destination hex is not on the same map.')
+
+        move_map = Map.objects.get(id=map_id) if map_id else None
+        map_current = move_map.current_tick if move_map else None
+        current_tick_number = map_current.number if map_current else 0
+        move_cost = move_difficulty(party.current_hex, destination, current_tick_number, move_map.weather if move_map else 'fair')
+        if move_map and move_map.map_type != MapType.CITY:
+            if move_cost > party.speed:
+                raise PartyActionError('You must rest before traveling here.')
+
+        old_hex = party.current_hex
+        map_id = old_hex.map_id
+        party.last_action = party.current_action
+        party.current_action = Action.TRAVEL
+        if not (move_map and move_map.map_type == MapType.CITY):
+            party.speed -= move_cost
+        party.current_hex = destination
+        party.save()
+
+        all_map_hexes = list(Hex.objects.filter(map_id=map_id))
+        reveal_hex_on_move(destination, all_map_hexes)
+
+        if not (move_map and move_map.map_type == MapType.CITY):
+            rolls = party_move_rolls(old_hex, destination, move_map)
+            party.is_lost = rolls['lost']
+            party.save(update_fields=['is_lost'])
+
+        extra = {
+            'encounter_likelihood': destination.encounter_likelihood,
+            'terrain_type': destination.terrain_type,
+            **rolls,
+        }
+
+    elif action == 'search':
+        if party.current_hex:
+            reveal_pois_on_search(party.current_hex)
+        party.last_action = party.current_action
+        party.current_action = Action.SEARCH
+        party.save()
+
+    elif action == 'explore':
+        if not poi_id:
+            raise PartyActionError('poi_id required for explore.')
+        poi = get_object_or_404(PointOfInterest, id=poi_id, hex=party.current_hex)
+        poi.player_explored = True
+        poi.save()
+        party.last_action = party.current_action
+        party.current_action = Action.EXPLORE
+        party.save()
+
+    elif action == 'supply':
+        if amount is not None:
+            party.supplies = max(0, party.supplies + amount)
+        party.last_action = party.current_action
+        party.current_action = Action.SUPPLY
+        party.save()
+        supply_map = Map.objects.get(id=map_id) if map_id else None
+        if supply_map and supply_map.map_type != MapType.CITY:
+            rolls = party_wilderness_roll('supply', supply_map)
+
+    elif action == 'delve':
+        if not party.current_hex:
+            raise PartyActionError('Party has no current hex.')
+        dungeon = party.current_hex.pois.filter(poi_type='dungeon', hidden=False).first()
+        if not dungeon:
+            raise PartyActionError('No accessible dungeon on current hex.')
+        dungeon.player_explored = True
+        dungeon.save()
+        party.last_action = party.current_action
+        party.current_action = Action.DELVE
+        party.save()
+
+    elif action == 'social':
+        party.last_action = party.current_action
+        party.current_action = Action.SOCIAL
+        party.save()
+
+    elif action == 'rest':
+        party.speed = party.max_speed
+        party.last_action = party.current_action
+        party.current_action = Action.REST
+        party.save()
+        rest_map = Map.objects.get(id=map_id) if map_id else None
+        if rest_map and rest_map.map_type != MapType.CITY:
+            rolls = party_wilderness_roll('rest', rest_map)
+
+    elif action == 'clear_lost':
+        if not party.is_lost:
+            raise PartyActionError('Party is not lost.')
+        if not party.current_hex:
+            raise PartyActionError('Party has no current hex.')
+        map_obj_cl = Map.objects.get(id=map_id) if map_id else None
+        tick_num_cl = map_obj_cl.current_tick.number if map_obj_cl and map_obj_cl.current_tick else 0
+        cost = party.current_hex.terrain_difficulty + night_bonus(tick_num_cl)
+        party.speed = max(0, party.speed - cost)
+        party.is_lost = False
+        party.last_action = party.current_action
+        party.current_action = Action.TRAVEL
+        party.save()
+        if map_id:
+            sse_messages.append({'type': 'navigation_update', 'lost': False})
+
+    else:
+        raise PartyActionError(f'Unknown action: {action}')
+
+    map_obj = Map.objects.get(id=map_id) if map_id else None
+    is_city = map_obj and map_obj.map_type == MapType.CITY
+
+    if is_city:
+        map_obj.sub_tick += 1
+        is_shift = map_obj.sub_tick % 3 == 0
+        if is_shift:
+            map_obj.sub_tick = 0
+        map_obj.save(update_fields=['sub_tick'])
+        party_sub_tick = 0 if is_shift else map_obj.sub_tick
+    else:
+        is_shift = True
+        party_sub_tick = 0
+
+    if is_shift:
+        tick_number, events = run_shift(map_id)
+        map_obj.refresh_from_db(fields=['current_tick'])
+        tick = map_obj.current_tick
+    else:
+        tick_number = map_obj.current_tick.number if map_obj and map_obj.current_tick else 0
+        events = []
+
+    tick = map_obj.current_tick if map_obj else None
+    party_tick = _create_party_tick(party, tick, party.current_action, sub_tick=party_sub_tick)
+
+    if map_id and map_obj:
+        map_obj.player_actions_locked = True
+        map_obj.save(update_fields=['player_actions_locked'])
+        if action in ('move', 'supply', 'rest') and rolls:
+            sse_messages.append({'type': 'move_result', 'action': action, **rolls})
+
+    return PartyActionOutcome(
+        tick_number=tick_number,
+        events=events,
+        party_tick=party_tick,
+        map_id=map_id,
+        extra=extra,
+        sse_messages=sse_messages,
     )
 

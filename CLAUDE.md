@@ -58,8 +58,15 @@ docker exec hextick-frontend-1 npx tsc --noEmit
         ticks.py                # Tick, HexTick, FactionTick, PartyTick
         party.py                # Party
         settings.py             # WorldSettings singleton
-      api.py                    # Django Ninja API — all endpoints live here
-      actions.py                # ALL game logic — tick, actions, encounters, diseases
+      api/                      # Django Ninja API, split into per-resource routers
+        __init__.py             # builds the NinjaAPI, mounts every router at '/'
+        common.py               # api instance, _redis, SSE helpers (publish/broadcast_tick/tick_stream), shared tick schemas
+        maps.py hexes.py factions.py knowledge.py tick.py party.py gallery.py
+        # Routers are thin: validate/serialize + SSE plumbing. Error paths call common.api.create_response.
+      actions.py                # ALL game logic — tick, actions, encounters, diseases.
+                                # run_shift() (shift orchestration) and perform_party_action()
+                                # (party action rules, raises PartyActionError) live here; the
+                                # tick.py/party.py routers call them.
       admin.py
       utils.py                  # modifier(), hex_distance(), adjacent_hexes()
   frontend/                     # Vite React app
@@ -99,6 +106,29 @@ Engine tests live in `backend/world/tests/`. `conftest.py` provides DB-backed fa
 
 Some tests intentionally **pin current, known-buggy behavior** documented in `design_docs/code-review.md` rather than the intended behavior — marked with a `CHARACTERIZATION — pins <id>` comment (H2/H4/H5/H6/H7/M1/M2/M3/M7/M8). Expect each to need rewriting the moment its finding is fixed, not to stay green forever (e.g. the M1 pin in `test_diseases.py::test_recontraction_before_expiry_reapplies_stat_effect`).
 
+### Frontend tests
+
+Frontend tests use **Vitest + React Testing Library + jsdom**. Config lives in `frontend/vite.config.ts` under the `test` key (`globals: true`, `environment: 'jsdom'`, `setupFiles: ['./src/test/setup.ts']`). The setup file registers `@testing-library/jest-dom` matchers and runs `cleanup()` after each test. Tests are colocated as `*.test.ts`/`*.test.tsx` next to the code they cover.
+
+Current coverage (116 tests): `utils/moveCost`, `components/HexMap/hexGeometry`, `store/useGameStore`, `hooks/useTickStream`, `api/client`, `api/maps`, `api/tick`, `api/gallery`, and the components `TimeOfDayBadge`, `EventLog`, `DiceModal`, `MonsterModal`, `NPCModal`, `LastActionResultModal`, `ActionModal`, `AddFactionModal`, `AddPOIModal`, `BulkHexPanel`, and `HexPanel`. Patterns worth reusing:
+- **Shared render helper** — `src/test/renderWithProviders.tsx` wraps RTL `render` in a fresh `QueryClient` (`retry: false`) + `MemoryRouter` and resets `useGameStore` to its module-load snapshot in a `beforeEach` (registered on import). Use it for any component touching React Query, routing, or the store; seed cache via the returned `queryClient.setQueryData(...)`. Pass `routerEntries` for route-dependent components.
+- **Component api mocking** — `vi.mock('../../api/maps' | '../../api/tick' | '../../api/gallery', …)` with `vi.fn()` stubs keeps form/action components offline; assert the submitted body off `mock.calls`. `HexPanel` mocks all three (its gallery query is `enabled` under `gmMode`).
+- **HexPanel** is pinned (view/edit toggle, GM-only gating via `gmMode`, "Move party here" visibility, Last Action Result panel) **before** its planned extraction — treat these as characterization tests to preserve through the refactor.
+- **Clipboard** (`MonsterModal`/`NPCModal` copy) — spy on `navigator.clipboard.writeText`, defining a stub first if jsdom lacks one; do NOT `vi.stubGlobal('navigator', …)` (breaks `user-event`).
+- **Zustand store** — snapshot the initial state once at module load (`const initial = useGameStore.getState()`) and restore it in `beforeEach` via `useGameStore.setState(initial, true)` (the `true` replaces rather than merges). Call actions through `useGameStore.getState()` directly — no React needed.
+- **`useTickStream` hook** — install a fake `EventSource` class on `globalThis` (records instances, exposes an `emit(data)` that calls `onmessage` with `JSON.stringify`), render with `renderHook` wrapped in a `QueryClientProvider`, and `vi.spyOn(qc, 'invalidateQueries')` to assert which query keys each SSE event type invalidates.
+- **`api/client`** — stub `fetch` with `vi.stubGlobal('fetch', vi.fn())` (unstub in `afterEach`); assert method/body/headers off `fetchMock.mock.calls[0][1]`. Resolve `BASE` the same way `client.ts` does (`import.meta.env.VITE_API_URL ?? '…'`) — the container sets `VITE_API_URL=/api`, so a hardcoded base makes the assertion environment-dependent.
+
+**`node`/`npm`/`npx` are not on the Windows host and WSL's Node is too old (v12) for Vite 8 / Vitest 4.** Run tests inside the `hextick-frontend-1` container, same as `tsc`:
+```powershell
+docker exec hextick-frontend-1 npx vitest run          # one-shot
+docker exec hextick-frontend-1 npm run test            # watch mode
+docker exec hextick-frontend-1 npm run test:types      # typecheck test files (tsconfig.vitest.json)
+```
+The container's `node_modules` is an anonymous volume (see `docker-compose.yml`); its start command runs `npm install` on boot, so host `package.json` is the source of truth — a rebuild/restart reinstalls test deps automatically.
+
+**Build vs. tests split:** the production build (`npm run build` → `tsc -b`) excludes test files. `tsconfig.app.json` excludes `src/**/*.test.ts(x)` and `src/test`; test-file typechecking is a separate `tsconfig.vitest.json` (adds `vitest/globals` + `jest-dom` types, keeps `vite/client`). Don't remove those excludes or the build will try to compile test globals and fail.
+
 ## Hard rules
 
 **Delete dead code immediately.** When a component, function, store key, or import is no longer used, remove it in the same session — don't leave it for later. Unused code creates false context for future sessions.
@@ -113,7 +143,7 @@ Some tests intentionally **pin current, known-buggy behavior** documented in `de
 
 **Tick sequence is per-map.** `Map.current_tick` is the single source of truth for each map's tick number. `Tick` has a `map` FK; `unique_together = [('map', 'number')]`. `tick.number % 3 == 0` is a day; `tick.number % 21 == 0` is a week. Tick 0 never exists.
 
-**`Map.map_type`** is either `regional` (default) or `city`. On city maps, `Map.sub_tick` counts party actions within the current shift (0–2). Every party action increments `sub_tick`; when `sub_tick % 3 == 0` it resets to 0 and `_run_shift` fires (advancing the global tick). On regional maps, every party action fires `_run_shift` immediately. Factions still tick once per shift regardless of map type. `PartyTick.sub_tick` records where in the shift the action fell (0 = shift tick, 1 or 2 = mid-shift).
+**`Map.map_type`** is either `regional` (default) or `city`. On city maps, `Map.sub_tick` counts party actions within the current shift (0–2). Every party action increments `sub_tick`; when `sub_tick % 3 == 0` it resets to 0 and `run_shift` fires (advancing the global tick). On regional maps, every party action fires `run_shift` immediately. Factions still tick once per shift regardless of map type. `PartyTick.sub_tick` records where in the shift the action fell (0 = shift tick, 1 or 2 = mid-shift).
 
 **Time of day** cycles every 3 ticks: `% 3 == 0` → Morning, `% 3 == 1` → Afternoon, `% 3 == 2` → Night. Current day displayed as `floor(tick / 3)`. Night adds +2 via `night_bonus()` for faction/character non-movement uses. Movement uses `move_difficulty()` which applies its own night penalty of +1 (not +2). The frontend `TimeOfDayBadge` component reads from `GET /api/maps/{map_id}/tick/current/`.
 
@@ -167,7 +197,7 @@ Some tests intentionally **pin current, known-buggy behavior** documented in `de
 
 `Faction.movement_restricted` (BooleanField, default False) + `Faction.allowed_hexes` (M2M to `Hex`, related name `restricted_factions`).
 
-When `movement_restricted=True` and the faction is not a GM faction, `_run_shift` filters `candidates` to only hexes in `allowed_hexes` before passing to `tick_faction`. GM factions are always under manual control and are not affected.
+When `movement_restricted=True` and the faction is not a GM faction, `run_shift` filters `candidates` to only hexes in `allowed_hexes` before passing to `tick_faction`. GM factions are always under manual control and are not affected.
 
 The GM sets `allowed_hexes` via the faction edit form in `HexPanel`: check "Movement restricted", click "Select hexes" to enter `factionHexSelectMode` in Zustand, click hexes on the map (teal highlight, distinct from multi-select gold), then "Done selecting". On save, `PATCH /api/factions/{id}/` sends `movement_restricted` and `allowed_hexes` (list of IDs, `.set()` on the backend like `knowledge`).
 
@@ -182,7 +212,7 @@ Frontend store keys: `factionHexSelectMode`, `factionAllowedHexIds`, `setFaction
 | `is_gm_faction = True` | No | GM sets action via frontend modal |
 | neither | Yes | `_select_action` runs each tick |
 
-Dead factions (`is_dead = True`, set when `population <= 0`) are excluded from `_run_shift` entirely and do not tick.
+Dead factions (`is_dead = True`, set when `population <= 0`) are excluded from `run_shift` entirely and do not tick.
 
 ## `_select_action` priority (NPC factions only)
 
@@ -207,7 +237,7 @@ BATTLE and TRADE each have a 1-tick cooldown via `last_action`.
 
 **Key fields**: `player_count` (number of players, default 1), `supplies` (party resource pool, default 0), `resource_generation`, `speed`, `max_speed`, `is_lost` (BooleanField, default False).
 
-**Speed gating** — `POST /party/{id}/action/` with `action: 'move'` is rejected (400) if `destination.terrain_difficulty > party.speed`. The player must rest first. `action: 'rest'` resets `party.speed = party.max_speed` and counts as a full action (triggers `_run_shift`). Rest is always available.
+**Speed gating** — `POST /party/{id}/action/` with `action: 'move'` is rejected (400) if `destination.terrain_difficulty > party.speed`. The player must rest first. `action: 'rest'` resets `party.speed = party.max_speed` and counts as a full action (triggers `run_shift`). Rest is always available.
 
 **Movement rolls (regional maps only)** — on every `move` action, `party_move_rolls(origin, destination)` in `actions.py` fires two d6 rolls:
 
@@ -216,11 +246,11 @@ BATTLE and TRADE each have a 1-tick cooldown via `last_action`.
 
 Results are broadcast as a `type: "move_result"` SSE event so both GM and player views update in real time. `useTickStream` handles this by calling `setMoveResult` in the Zustand store.
 
-**`clear_lost` action** — `POST /party/{id}/action/` with `action: 'clear_lost'`. Deducts `current_hex.terrain_difficulty + night_bonus` from speed (floor 0), sets `is_lost = False`, publishes `type: "navigation_update"` SSE event so the GM panel updates to "On course" without a full tick invalidation. Triggers `_run_shift`.
+**`clear_lost` action** — `POST /party/{id}/action/` with `action: 'clear_lost'`. Deducts `current_hex.terrain_difficulty + night_bonus` from speed (floor 0), sets `is_lost = False`, publishes `type: "navigation_update"` SSE event so the GM panel updates to "On course" without a full tick invalidation. Triggers `run_shift`.
 
 **Last Move panel** — `HexPanel` always renders a "Last Move" section above the Party footer (visible to both GM and player). Shows: Navigation (On course / Lost — with "(Skipped)" if the roll was bypassed) and Wilderness Event. Populated via the Zustand `moveResult` store key, which is set by `useTickStream` on `move_result` / `navigation_update` SSE events. Persists until overwritten by the next move.
 
-**Supply consumption** — every Morning tick (`tick.number % 3 == 0`), `_run_shift` deducts `party.player_count` from `party.supplies` (floor 0). Supply action accepts an optional `amount` int; if provided, it is added to `party.supplies` before the tick runs.
+**Supply consumption** — every Morning tick (`tick.number % 3 == 0`), `run_shift` deducts `party.player_count` from `party.supplies` (floor 0). Supply action accepts an optional `amount` int; if provided, it is added to `party.supplies` before the tick runs.
 
 **GM supply endpoint** — `PATCH /api/party/{id}/supplies/` with `{ supplies: int }` sets `party.supplies` directly (floor 0). Superseded by `PATCH /api/party/{id}/` for GM use — the broader endpoint is what `HexPanel` now calls. The supplies-only endpoint remains but is no longer wired to any UI.
 
@@ -312,33 +342,6 @@ File upload uses the same multipart/form-data pattern as map image upload: `File
 Route: `/map/:mapId/gallery` → `GalleryPage`. Linked via "Gallery" button in the GMPage header.
 
 **Faction images** — `Faction` has an `image` FK to `GalleryImage` (nullable, `SET_NULL`). Assignable via `PATCH /api/factions/{id}/` with `{ "image": <gallery_image_id> }`, via the faction edit form in `HexPanel` (GM mode only — `<select>` populated from `['gallery', map.id]`), or via Django admin. When a player clicks **Interact** on a faction that has an image set, `PATCH /gallery/{id}/publish/` fires immediately (no modal) — the SSE broadcast triggers the fullscreen overlay on `PlayerPage`. Factions without an image open the standard flavour-text `InteractModal` instead.
-
----
-
-## What's not wired up yet
-
-**API**
-- `PATCH /api/factions/{id}/action/` not yet implemented as a dedicated endpoint — `next_action` is now editable via `PATCH /api/factions/{id}/` from the HexPanel faction detail
-- Party is fetched via `GET /api/maps/{map_id}/party/` (one party per map via `OneToOneField`). `PATCH /api/party/{id}/` exists and accepts `player_count`, `supplies`, `speed`, `max_speed`, `resource_generation`, `current_action`, `current_hex` (all optional). `current_hex` accepts a hex ID and teleports the party with no speed check.
-- Tick history endpoints: `GET /maps/{id}/ticks/` (list tick numbers), `GET /maps/{id}/tick/{n}/state/` (HexTick + FactionTick + most-recent-PartyTick-at-or-before-N snapshots), `POST /maps/{id}/tick/{n}/reset/` (delete future ticks, restore live state from snapshots, set `Map.current_tick`)
-- No API endpoint to edit or delete existing POIs — use Django admin for that
-
-**Backend**
-- `FactionTick` does not snapshot `last_action`, `next_action`, `notes`, or `is_gm_faction`
-- `update_character_visibility()` is not called anywhere in the tick flow — needs a home in step 6 of `_run_shift`
-
-**Frontend**
-- "Show on map" on the Factions page selects the faction's hex but does not pan/zoom to it. Programmatic pan requires exposing the ref-based transform in `HexMap` — deferred.
-- `PlayerPage` fetches the party via `['party', mapId]` and passes `party.id` to `POST /api/party/{id}/action/`.
-- `HexPanel` accepts an optional `party` prop — renders a pinned footer with party stats (speed, hex, destination, action, resource gen). `PlayerPage` passes `factions` filtered to `selectedHex.id` (for the selected-hex view) and `partyHexFactions` filtered to `party.current_hex` (non-player factions only) — the latter renders the **Factions Present** footer with Interact buttons regardless of which hex is selected. The faction detail expand and edit form are gated behind `gmMode`. In `gmMode` the footer has an Edit button that opens an inline edit form for `player_count`, `supplies`, `speed`, `max_speed`, `resource_generation`, and `current_action`; saved via `PATCH /party/{id}/`.
-- Player view renders a **hex labels bar** (pill badges) below the hex info when `player_visible || player_explored`. Labels: terrain type (shown if `player_visible || player_explored`), Roads (if `has_roads`), Rivers (if `has_rivers`). Weather is no longer per-hex — it is on `Map.weather` and displayed in the `PlayerPage` header (icon + label, to the left of Speed). The GM controls weather via a ◀/▶ cycle control in `TickControls` with a "Set" confirm button.
-- POI player-mode visibility rule is `!hidden` (not `player_visible`) — any non-hidden POI renders for the player.
-- `ActionModal` is built and wired into `PlayerPage` — opens via "Actions…" button when a hex is selected. Offers Move, Supply, Delve, Search, Social. Each action is enabled/disabled based on context (current hex vs other hex, dungeon presence). `Social` action records the tick but has no game effect.
-- GM faction action-setting modal not yet built — `next_action`, `destination`, `notes`, and `agreeableness` are now editable from the HexPanel faction expand/edit, but a dedicated modal for full faction management is not built
-- `patchPartyTickNotes` wired in `api/tick.ts` but no UI to trigger it
-- **Tick history / time-travel**: `viewingTickNumber: number | null` in Zustand (null = live). ◀ Shift navigates backward into history; while in history mode, Shift ▶ / Day ▶▶ are hidden and replaced by ▶ forward, **▶ Live** (returns to present, unlocks players), and **Reset to this tick** (calls reset endpoint then exits history). Entering history auto-sets `player_actions_locked = true`. GMPage fetches historical state via `['tickState', mapId, n]` and merges it over live hexes, factions, and party before passing to HexMap/HexPanel. `PartyTick` lookup uses most-recent-at-or-before, since party ticks only exist when a party action fired.
-- HexMap scroll-to-zoom is broken — anchor drifts toward bottom-right when cursor is not at top-left. Root cause unknown after investigation; pan/zoom now uses native listeners + direct SVG style mutation (refs, no React state). Needs a fresh look.
-- `AddPOIModal` does not support setting the `faction` FK (village type) — needs a faction picker
 
 **Map / hex creation**
 - `POST /api/maps/` uses Pillow to infer rows/cols from image dimensions ÷ hex size — approximate, ignores origin offset. Formula: `cols = floor(w / (size * 1.5))`, `rows = floor(h / (size * √3))`.

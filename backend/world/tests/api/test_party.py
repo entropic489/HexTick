@@ -157,7 +157,7 @@ class TestCityMapActions:
 class TestPartyActionNoHex:
     def test_non_move_action_without_hex_500(self, client, party_factory, map_factory):
         # CHARACTERIZATION — pins H6: for a party with current_hex=None, map_id is
-        # never derived (party.map is ignored), so _run_shift(None) raises and the
+        # never derived (party.map is ignored), so run_shift(None) raises and the
         # request 500s. Rewrite to expect 200/400 once H6 falls back to party.map.
         m = map_factory()
         p = party_factory(map=m, current_hex=None)

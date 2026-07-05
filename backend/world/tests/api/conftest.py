@@ -53,7 +53,9 @@ def fake_redis(monkeypatch):
             return 1
 
     fake = FakeRedis()
-    monkeypatch.setattr('world.api._redis', fake, raising=True)
+    # `world.api` was split into a package; the live Redis client and all publish
+    # helpers now live in `world.api.common`, which reads `_redis` at call time.
+    monkeypatch.setattr('world.api.common._redis', fake, raising=True)
     return fake
 
 
