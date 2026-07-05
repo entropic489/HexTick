@@ -43,7 +43,7 @@ class TestPostTick:
         a = hex_factory(map=m, row=0, col=0)
         b = hex_factory(map=m, row=1, col=0)
         f = faction_factory(current_hex=a, name='Penned', is_mobile=True,
-                            movement_restricted=True, is_gm_faction=False)
+                            movement_restricted=True)
         f.allowed_hexes.set([a])  # b is off-limits
         resp = client.post('/api/tick/', {'map_id': m.id, 'mode': 'shift'})
         assert resp.status_code == 200
@@ -105,31 +105,23 @@ class TestResetToTick:
         m.refresh_from_db()
         assert m.current_tick.number == 1
 
-    def test_reset_restores_covered_fields_but_not_omitted_ones(self, client, map_factory,
-                                                                hex_factory, faction_factory):
-        # CHARACTERIZATION — pins H4: reset_to_tick restores a SUBSET of the
-        # FactionTick snapshot. `resources` is restored; `theology` (also
-        # snapshotted) is NOT. Rewrite when H4 adds the omitted fields.
+    def test_reset_restores_faction_population(self, client, map_factory,
+                                               hex_factory, faction_factory):
         m = map_factory()
         h = hex_factory(map=m, row=0, col=0)
-        f = faction_factory(current_hex=h, name='Drift', theology=90)
+        f = faction_factory(current_hex=h, name='Drift', population=50)
         client.post('/api/tick/', {'map_id': m.id, 'mode': 'shift'})  # tick 1 snapshot
         ft1 = FactionTick.objects.get(faction=f, tick__number=1)
 
         # Mutate live state after the snapshot, then reset back to tick 1.
         f.refresh_from_db()
-        f.resources = 12345
-        f.theology = 7
-        f.save(update_fields=['resources', 'theology'])
+        f.population = 12345
+        f.save(update_fields=['population'])
 
         resp = client.post(f'/api/maps/{m.id}/tick/1/reset/', {})
         assert resp.status_code == 200
         f.refresh_from_db()
-        # resources is in the restore list -> reverted to the snapshot value
-        assert f.resources == ft1.resources
-        # theology is snapshotted but omitted from the restore -> stays mutated
-        assert f.theology == 7
-        assert ft1.theology == 90
+        assert f.population == ft1.population == 50
 
     def test_reset_missing_tick_404(self, client, map_factory):
         m = map_factory()

@@ -65,11 +65,6 @@ class FactionTickStateSchema(Schema):
     is_mobile: bool
     speed: int
     population: int
-    technology: int
-    technology_max: int
-    resources: int
-    agreeableness: int
-    combat_skill: int
     current_hex: Optional[int]
     destination: Optional[int]
     action: Optional[str]
@@ -118,11 +113,6 @@ def get_tick_state(request, map_id: int, tick_number: int):
                 'is_mobile': ft.is_mobile,
                 'speed': ft.speed,
                 'population': ft.population,
-                'technology': ft.technology,
-                'technology_max': ft.technology_max,
-                'resources': ft.resources,
-                'agreeableness': ft.agreeableness,
-                'combat_skill': ft.combat_skill,
                 'current_hex': ft.current_hex_id,
                 'destination': ft.destination_id,
                 'action': ft.action,
@@ -162,11 +152,6 @@ def reset_to_tick(request, map_id: int, tick_number: int):
         Faction.objects.filter(id=ft.faction_id).update(
             speed=ft.speed,
             population=ft.population,
-            technology=ft.technology,
-            technology_max=ft.technology_max,
-            resources=ft.resources,
-            agreeableness=ft.agreeableness,
-            combat_skill=ft.combat_skill,
             current_hex_id=ft.current_hex_id,
             destination_id=ft.destination_id,
         )

@@ -37,34 +37,32 @@ class TestCreateFaction:
         m = map_factory()
         h = hex_factory(map=m, row=0, col=0)
         resp = client.post(f'/api/maps/{m.id}/factions/', {
-            'name': 'Kobolds', 'current_hex': h.id, 'combat_skill': 7,
+            'name': 'Kobolds', 'current_hex': h.id, 'max_speed': 7,
         })
         assert resp.status_code == 200
         body = resp.json()
         assert body['name'] == 'Kobolds'
         assert body['current_hex'] == h.id
-        assert body['combat_skill'] == 7
+        assert body['max_speed'] == 7
 
-    def test_create_faction_drops_notes(self, client, map_factory, hex_factory):
-        # CHARACTERIZATION — pins M7: FactionCreateSchema accepts `notes` but the
-        # create() call never forwards it, so it is silently discarded.
+    def test_create_faction_forwards_notes(self, client, map_factory, hex_factory):
         m = map_factory()
         h = hex_factory(map=m, row=0, col=0)
         resp = client.post(f'/api/maps/{m.id}/factions/', {
-            'name': 'Silent', 'current_hex': h.id, 'notes': 'should be dropped',
+            'name': 'Noted', 'current_hex': h.id, 'notes': 'kept',
         })
         assert resp.status_code == 200
-        assert resp.json()['notes'] == ''
-        assert Faction.objects.get(name='Silent').notes == ''
+        assert resp.json()['notes'] == 'kept'
+        assert Faction.objects.get(name='Noted').notes == 'kept'
 
 
 class TestPatchFaction:
     def test_patch_scalar_fields(self, client, faction_factory):
-        f = faction_factory(name='Nomads', agreeableness=0)
-        resp = client.patch(f'/api/factions/{f.id}/', {'agreeableness': -40, 'speed': 6})
+        f = faction_factory(name='Nomads')
+        resp = client.patch(f'/api/factions/{f.id}/', {'population': 40, 'speed': 6})
         assert resp.status_code == 200
         body = resp.json()
-        assert body['agreeableness'] == -40
+        assert body['population'] == 40
         assert body['speed'] == 6
 
     def test_patch_current_hex_and_destination(self, client, map_factory, hex_factory, faction_factory):
@@ -78,21 +76,17 @@ class TestPatchFaction:
         f.refresh_from_db()
         assert f.destination_id == b.id
 
-    def test_patch_knowledge_and_allowed_hexes_set(self, client, map_factory, hex_factory, faction_factory):
+    def test_patch_allowed_hexes_set(self, client, map_factory, hex_factory, faction_factory):
         m = map_factory()
         a = hex_factory(map=m, row=0, col=0)
         b = hex_factory(map=m, row=1, col=0)
         f = faction_factory(current_hex=a)
-        k1 = m.knowledge.create(title='K1')
-        k2 = m.knowledge.create(title='K2')
         resp = client.patch(f'/api/factions/{f.id}/', {
-            'knowledge': [k1.id, k2.id],
             'movement_restricted': True,
             'allowed_hexes': [a.id, b.id],
         })
         assert resp.status_code == 200
         body = resp.json()
-        assert set(body['knowledge']) == {k1.id, k2.id}
         assert set(body['allowed_hexes']) == {a.id, b.id}
         assert body['movement_restricted'] is True
 

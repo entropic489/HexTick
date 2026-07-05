@@ -5,7 +5,6 @@ from django.shortcuts import get_object_or_404
 from django.db import transaction
 
 from world.models import Map, Hex, Faction
-from world.models.characters import Knowledge
 
 router = Router()
 
@@ -15,26 +14,16 @@ class FactionSchema(Schema):
     name: str
     color: str
     speed: int
+    max_speed: int
     population: int
-    technology: int
-    resources: int
-    combat_skill: int
     current_action: Optional[str]
     last_action: Optional[str]
     current_hex: Optional[int]
     destination: Optional[int]
     is_mobile: bool
-    is_gm_faction: bool
     is_dead: bool
-    is_famine: bool
-    is_dying: bool
-    max_speed: int
-    agreeableness: int
-    theology: int
-    technology_max: int
     next_action: Optional[str] = None
     notes: str = ''
-    knowledge: list[int] = []
     leader: str = ''
     image: Optional[int] = None
     movement_restricted: bool = False
@@ -49,10 +38,6 @@ class FactionSchema(Schema):
         return obj.destination_id
 
     @staticmethod
-    def resolve_knowledge(obj):
-        return [k.id for k in obj.knowledge.all()]
-
-    @staticmethod
     def resolve_image(obj):
         return obj.image_id
 
@@ -64,43 +49,33 @@ class FactionSchema(Schema):
 class FactionCreateSchema(Schema):
     name: str
     color: str = '#89b4fa'
-    speed: int = 3
+    speed: int = 4
+    max_speed: int = 4
     population: int = 10
-    technology: int = 5
-    resources: int = 10
-    combat_skill: int = 5
     current_hex: Optional[int] = None
     destination: Optional[int] = None
     is_mobile: bool = True
-    is_gm_faction: bool = False
-    agreeableness: int = 0
-    theology: int = 90
     notes: str = ''
 
 
 @router.get("/maps/{map_id}/factions/", response=list[FactionSchema])
 def list_factions(request, map_id: int):
     get_object_or_404(Map, id=map_id)
-    return list(Faction.objects.filter(current_hex__map_id=map_id).prefetch_related('knowledge', 'allowed_hexes'))
+    return list(Faction.objects.filter(current_hex__map_id=map_id).prefetch_related('allowed_hexes'))
 
 
 class FactionPatchSchema(Schema):
     name: Optional[str] = None
     color: Optional[str] = None
     speed: Optional[int] = None
+    max_speed: Optional[int] = None
     population: Optional[int] = None
-    technology: Optional[int] = None
-    resources: Optional[int] = None
-    combat_skill: Optional[int] = None
     current_hex: Optional[int] = None
     destination: Optional[int] = None
     is_mobile: Optional[bool] = None
-    is_gm_faction: Optional[bool] = None
-    agreeableness: Optional[int] = None
-    theology: Optional[int] = None
+    is_dead: Optional[bool] = None
     next_action: Optional[str] = None
     notes: Optional[str] = None
-    knowledge: Optional[list[int]] = None
     leader: Optional[str] = None
     image: Optional[int] = None
     movement_restricted: Optional[bool] = None
@@ -122,13 +97,10 @@ def patch_faction(request, faction_id: int, body: FactionPatchSchema):
     if 'image' in data:
         image_id = data.pop('image')
         faction.image = get_object_or_404(GalleryImage, id=image_id) if image_id is not None else None
-    knowledge_ids = data.pop('knowledge', None)
     allowed_hex_ids = data.pop('allowed_hexes', None)
     for field, value in data.items():
         setattr(faction, field, value)
     faction.save()
-    if knowledge_ids is not None:
-        faction.knowledge.set(Knowledge.objects.filter(id__in=knowledge_ids))
     if allowed_hex_ids is not None:
         faction.allowed_hexes.set(Hex.objects.filter(id__in=allowed_hex_ids))
     return faction
@@ -144,15 +116,11 @@ def create_faction(request, map_id: int, body: FactionCreateSchema):
         name=body.name,
         color=body.color,
         speed=body.speed,
+        max_speed=body.max_speed,
         population=body.population,
-        technology=body.technology,
-        resources=body.resources,
-        combat_skill=body.combat_skill,
         current_hex=current_hex,
         destination=destination,
         is_mobile=body.is_mobile,
-        is_gm_faction=body.is_gm_faction,
-        agreeableness=body.agreeableness,
-        theology=body.theology,
+        notes=body.notes,
     )
     return faction

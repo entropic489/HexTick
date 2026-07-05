@@ -32,6 +32,8 @@ class TestListAndGet:
         assert body['map_type'] == 'regional'
         assert body['weather'] == 'fair'
         assert body['player_actions_locked'] is False
+        assert body['reveal_mode'] == 'grey_fog'
+        assert body['detail_image'] is None
 
     def test_get_missing_map_404(self, client):
         resp = client.get('/api/maps/999999/')
@@ -110,23 +112,44 @@ class TestCreateMap:
 
 
 class TestDuplicateMap:
-    def test_duplicate_copies_hexes_factions_knowledge(self, client, map_factory,
-                                                        hex_factory, faction_factory):
+    def test_duplicate_copies_hexes_and_factions(self, client, map_factory,
+                                                  hex_factory, faction_factory):
         source = map_factory(name='Source')
         h = hex_factory(map=source, row=0, col=0)
         hex_factory(map=source, row=1, col=0)
         faction_factory(current_hex=h, name='Orcs')
-        source.knowledge.create(title='Lore')
 
-        resp = client.post(f'/api/maps/{source.id}/duplicate/', {'name': 'Copy'})
+        resp = client.post_multipart(f'/api/maps/{source.id}/duplicate/', {'name': 'Copy'})
         assert resp.status_code == 200
         new_id = resp.json()['id']
         assert new_id != source.id
         new_map = Map.objects.get(id=new_id)
         assert new_map.hexes.count() == 2
-        assert new_map.knowledge.count() == 1
         from world.models import Faction
         assert Faction.objects.filter(current_hex__map=new_map, name='Orcs').exists()
+
+    def test_duplicate_defaults_carry_over_source_reveal_mode(self, client, map_factory):
+        source = map_factory(name='Source', reveal_mode='two_layer')
+        resp = client.post_multipart(f'/api/maps/{source.id}/duplicate/', {'name': 'Copy'})
+        assert resp.status_code == 200
+        assert resp.json()['reveal_mode'] == 'two_layer'
+
+    def test_duplicate_converts_grey_fog_to_two_layer_with_new_detail_image(
+        self, client, media_root, map_factory,
+    ):
+        source = map_factory(name='Source')  # default grey_fog
+        detail = SimpleUploadedFile('detail.png', make_png_bytes(), content_type='image/png')
+        resp = client.post_multipart(f'/api/maps/{source.id}/duplicate/', {
+            'name': 'Two-layer copy',
+            'reveal_mode': 'two_layer',
+            'detail_image': detail,
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body['reveal_mode'] == 'two_layer'
+        assert body['detail_image'] is not None
+        new_map = Map.objects.get(id=body['id'])
+        assert new_map.detail_image.name.startswith('maps/detail')
 
     def test_duplicate_shares_gallery_image_file(self, client, media_root, map_factory):
         # CHARACTERIZATION — pins H5: duplicate_map assigns image=gi.image, so the
@@ -137,7 +160,7 @@ class TestDuplicateMap:
             map=source, name='pic',
             image=SimpleUploadedFile('g.png', make_png_bytes(), content_type='image/png'),
         )
-        resp = client.post(f'/api/maps/{source.id}/duplicate/', {'name': 'Copy'})
+        resp = client.post_multipart(f'/api/maps/{source.id}/duplicate/', {'name': 'Copy'})
         assert resp.status_code == 200
         new_gi = GalleryImage.objects.get(map_id=resp.json()['id'])
         assert new_gi.image.name == gi.image.name  # shared file path (the bug)

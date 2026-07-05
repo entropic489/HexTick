@@ -6,7 +6,6 @@ from django.shortcuts import get_object_or_404
 from django.db import transaction
 
 from world.models import Map, Hex, PointOfInterest, Faction, GalleryImage
-from world.models.characters import Knowledge
 from world.models.party import Party
 
 from .common import api, publish
@@ -26,6 +25,10 @@ class MapSchema(Schema):
     sub_tick: int
     weather: str
     player_actions_locked: bool
+    reveal_mode: str
+    # Optional — Ninja's FieldFile encoder returns None for an empty ImageField, so this
+    # MUST be Optional[str] or serializing a map without a detail image would 500.
+    detail_image: Optional[str] = None
 
 
 class MapLockSchema(Schema):
@@ -84,6 +87,9 @@ def create_map(
     origin_y: Form[int],
     image: File[Optional[UploadedFile]] = None,
     image_path: Form[Optional[str]] = None,
+    reveal_mode: Form[str] = 'grey_fog',
+    detail_image: File[Optional[UploadedFile]] = None,
+    detail_image_path: Form[Optional[str]] = None,
 ):
     from PIL import Image as PILImage
     import math
@@ -107,9 +113,15 @@ def create_map(
     cols = max(1, math.floor(img_w / (hex_size * 1.5)))
     rows = max(1, math.floor(img_h / (hex_size * sqrt3)))
 
+    # Detail image (two-layer mode) — optional; mirrors the image / image_path dual pattern.
+    detail_value = detail_image or detail_image_path or None
+
     with transaction.atomic():
-        m = Map(name=name, hex_size=hex_size, origin_x=origin_x, origin_y=origin_y)
+        m = Map(name=name, hex_size=hex_size, origin_x=origin_x, origin_y=origin_y,
+                reveal_mode=reveal_mode)
         m.image = image_value
+        if detail_value:
+            m.detail_image = detail_value
         m.save()
         Hex.objects.bulk_create([
             Hex(map=m, row=r, col=c)
@@ -119,52 +131,38 @@ def create_map(
     return m
 
 
-class DuplicateMapSchema(Schema):
-    name: str
-
-
 @router.post("/maps/{map_id}/duplicate/", response=MapSchema)
-def duplicate_map(request, map_id: int, body: DuplicateMapSchema):
-    from world.models.faction import ActiveDisease
-
+def duplicate_map(
+    request,
+    map_id: int,
+    name: Form[str],
+    # Optional overrides — omit to clone the source's mode/images unchanged.
+    # Supplying an uploaded image replaces that layer (and sidesteps the shared-file
+    # reference the plain clone otherwise keeps). Chiefly used to copy a grey-fog map
+    # into a two-layer map, swapping in a base + detail image while preserving everything else.
+    reveal_mode: Form[Optional[str]] = None,
+    image: File[Optional[UploadedFile]] = None,
+    detail_image: File[Optional[UploadedFile]] = None,
+):
     source = get_object_or_404(Map, id=map_id)
 
     with transaction.atomic():
         # --- New Map ---
         new_map = Map(
-            name=body.name,
-            image=source.image,
+            name=name,
+            image=image or source.image,
             hex_size=source.hex_size,
             origin_x=source.origin_x,
             origin_y=source.origin_y,
             fog_of_war=source.fog_of_war,
             map_type=source.map_type,
+            reveal_mode=reveal_mode or source.reveal_mode,
+            detail_image=detail_image or source.detail_image or None,
             sub_tick=0,
             player_actions_locked=False,
             current_tick=None,
         )
         new_map.save()
-
-        # --- Knowledge ---
-        knowledge_map: dict[int, int] = {}  # old_id -> new_id
-        old_knowledge = list(source.knowledge.prefetch_related('related_knowledge').all())
-        for k in old_knowledge:
-            new_k = Knowledge(
-                map=new_map,
-                title=k.title,
-                description=k.description,
-                do_players_know=k.do_players_know,
-                age=k.age,
-            )
-            new_k.save()
-            knowledge_map[k.id] = new_k.id
-        # Wire related_knowledge M2M after all knowledge cloned
-        new_knowledge_by_old = {k.id: Knowledge.objects.get(id=knowledge_map[k.id]) for k in old_knowledge}
-        for k in old_knowledge:
-            new_k = new_knowledge_by_old[k.id]
-            related_ids = [knowledge_map[r.id] for r in k.related_knowledge.all() if r.id in knowledge_map]
-            if related_ids:
-                new_k.related_knowledge.set(related_ids)
 
         # --- Gallery Images ---
         gallery_map: dict[int, int] = {}  # old_id -> new_id
@@ -200,8 +198,8 @@ def duplicate_map(request, map_id: int, body: DuplicateMapSchema):
             hex_map[h.id] = new_h.id
 
         # --- POIs (faction FK deferred) ---
-        poi_map: dict[int, int] = {}  # old_id -> new_id (needed for POI knowledge M2M)
-        old_pois = list(PointOfInterest.objects.filter(hex__map=source).prefetch_related('knowledge').select_related('hex'))
+        poi_map: dict[int, int] = {}  # old_id -> new_id
+        old_pois = list(PointOfInterest.objects.filter(hex__map=source).select_related('hex'))
         for poi in old_pois:
             new_poi = PointOfInterest(
                 hex_id=hex_map[poi.hex_id],
@@ -221,15 +219,12 @@ def duplicate_map(request, map_id: int, body: DuplicateMapSchema):
             )
             new_poi.save()
             poi_map[poi.id] = new_poi.id
-            k_ids = [knowledge_map[k.id] for k in poi.knowledge.all() if k.id in knowledge_map]
-            if k_ids:
-                new_poi.knowledge.set(k_ids)
 
         # --- Factions ---
         faction_map: dict[int, int] = {}  # old_id -> new_id
         old_factions = list(
             Faction.objects.filter(current_hex__map=source)
-            .prefetch_related('knowledge', 'allowed_hexes', 'diseases')
+            .prefetch_related('allowed_hexes')
         )
         for f in old_factions:
             new_f = Faction(
@@ -237,23 +232,14 @@ def duplicate_map(request, map_id: int, body: DuplicateMapSchema):
                 leader=f.leader,
                 color=f.color,
                 is_mobile=f.is_mobile,
-                is_gm_faction=f.is_gm_faction,
                 speed=f.speed,
+                max_speed=f.max_speed,
                 population=f.population,
-                technology=f.technology,
-                technology_max=f.technology_max,
-                resources=f.resources,
-                agreeableness=f.agreeableness,
-                combat_skill=f.combat_skill,
-                scouting=f.scouting,
-                theology=f.theology,
                 notes=f.notes,
                 current_action=f.current_action,
                 next_action=f.next_action,
                 last_action=f.last_action,
-                population_trend_override=f.population_trend_override,
                 is_dead=f.is_dead,
-                famine_streak=f.famine_streak,
                 movement_restricted=f.movement_restricted,
                 image_id=gallery_map.get(f.image_id) if f.image_id else None,
                 current_hex_id=hex_map.get(f.current_hex_id) if f.current_hex_id else None,
@@ -262,21 +248,9 @@ def duplicate_map(request, map_id: int, body: DuplicateMapSchema):
             new_f.save()
             faction_map[f.id] = new_f.id
 
-            k_ids = [knowledge_map[k.id] for k in f.knowledge.all() if k.id in knowledge_map]
-            if k_ids:
-                new_f.knowledge.set(k_ids)
-
             allowed_ids = [hex_map[h.id] for h in f.allowed_hexes.all() if h.id in hex_map]
             if allowed_ids:
                 new_f.allowed_hexes.set(allowed_ids)
-
-            for disease in f.diseases.all():
-                ActiveDisease.objects.create(
-                    faction=new_f,
-                    disease_type=disease.disease_type,
-                    duration_days_remaining=disease.duration_days_remaining,
-                    effect_value=disease.effect_value,
-                )
 
         # --- Back-fill POI faction FKs ---
         for poi in old_pois:

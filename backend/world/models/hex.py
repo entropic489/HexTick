@@ -141,7 +141,5 @@ class PointOfInterest(models.Model):
     player_explored = models.BooleanField(default=False)
     hidden = models.BooleanField(default=False)
 
-    knowledge = models.ManyToManyField('world.Knowledge', blank=True)
-
     def __str__(self):
         return f"{self.get_poi_type_display()} at {self.hex}" if not self.name else self.name

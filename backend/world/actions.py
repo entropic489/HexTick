@@ -2,13 +2,13 @@ import random
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .models.faction import Faction, Action, DiseaseType, ActiveDisease
+from .models.faction import Faction, Action
 from .models.hex import Hex, PointOfInterest
 from .models.party import Party
 from .models.ticks import Tick, HexTick, FactionTick, PartyTick
 from .models.settings import WorldSettings
 from .models.world import Map, MapType, WeatherType
-from .utils import modifier, hex_distance, adjacent_hexes, night_bonus, move_difficulty
+from .utils import hex_distance, adjacent_hexes, night_bonus, move_difficulty
 
 
 class WildernessEvent(StrEnum):
@@ -120,152 +120,92 @@ class ActionResult:
 
 # --- Faction tick ---
 
+def _step_toward(target: Hex, candidates: list[Hex]) -> Hex | None:
+    """The adjacent candidate hex minimizing distance to target."""
+    return min(candidates, key=lambda h: hex_distance(h, target), default=None)
+
+
+def _perform_travel(
+    faction: Faction,
+    candidate_hexes: list[Hex],
+    restricted: list[Hex],
+    tick_number: int,
+    weather: str,
+) -> ActionResult:
+    """Step toward the GM-set destination (ignoring restrictions) if one is set;
+    otherwise wander to a random allowed adjacent hex."""
+    if faction.destination and faction.current_hex != faction.destination:
+        step = _step_toward(faction.destination, candidate_hexes)
+    elif restricted:
+        step = random.choice(restricted)
+    else:
+        step = None
+    if step:
+        return travel(faction, step, tick_number, weather)
+    return rest(faction)
+
+
 def _select_action(
     faction: Faction,
-    nearby_factions: list[Faction],
     candidate_hexes: list[Hex],
+    allowed_hex_ids: set[int] | None,
     tick_number: int,
     weather: str = 'fair',
 ) -> ActionResult:
-    hex = faction.current_hex
     candidate_hexes = list(candidate_hexes)
-    random.shuffle(candidate_hexes)
+    if allowed_hex_ids is None:
+        restricted = candidate_hexes
+    else:
+        restricted = [h for h in candidate_hexes if h.id in allowed_hex_ids]
 
-    # GM-set destination: steer around disagreeable factions on the current hex
+    # 1. GM-set next_action takes priority (consumed and cleared by tick_faction)
+    if faction.next_action:
+        action = faction.next_action
+        if action == Action.REST:
+            return rest(faction)
+        if action == Action.SUPPLY:
+            return supply(faction)
+        if action == Action.TRAVEL:
+            return _perform_travel(faction, candidate_hexes, restricted, tick_number, weather)
+        # A party-only action set as next_action: record it without effect.
+        return ActionResult(action=action)
+
+    # 2. GM-set destination: path toward it every tick (ignores movement restrictions)
     if faction.destination:
         if faction.current_hex == faction.destination:
             faction.destination = None
-            faction.save()
+            faction.save(update_fields=['destination'])
         else:
-            blocking = [
-                f for f in nearby_factions
-                if f.current_hex == faction.current_hex
-                and f.agreeableness < 50
-                and faction.last_action != Action.BATTLE
-            ]
-            step = min(
-                candidate_hexes,
-                key=lambda h: hex_distance(h, faction.destination),
-                default=None,
-            )
-            if blocking and step:
-                detour = min(
-                    (h for h in candidate_hexes if all(f.current_hex != h for f in blocking)),
-                    key=lambda h: hex_distance(h, faction.destination),
-                    default=step,
-                )
-                return travel(faction, detour, tick_number, weather)
+            step = _step_toward(faction.destination, candidate_hexes)
             if step:
                 return travel(faction, step, tick_number, weather)
+            return rest(faction)
 
-    # Resolve nearest faction within scouting range
-    in_range = [
-        f for f in nearby_factions
-        if f.current_hex and hex_distance(hex, f.current_hex) <= faction.scouting
-    ]
-    if in_range:
-        closest = min(in_range, key=lambda f: hex_distance(hex, f.current_hex))
-        outmatched = faction.combat_skill < closest.combat_skill
-        if faction.last_action != Action.BATTLE and faction.agreeableness < 0:
-            if faction.current_hex == closest.current_hex:
-                return battle(faction, closest)
-            else:
-                faction.destination = closest.current_hex
-                step = min(
-                    candidate_hexes,
-                    key=lambda h: hex_distance(h, closest.current_hex),
-                    default=None,
-                )
-                if step:
-                    return travel(faction, step, tick_number, weather)
-        if outmatched:
-            best = max(
-                candidate_hexes,
-                key=lambda h: h.resources - h.terrain_difficulty
-                              + hex_distance(h, closest.current_hex),
-                default=None,
-            )
-            if best:
-                return travel(faction, best, tick_number, weather)
-        elif faction.agreeableness < 0 and faction.combat_skill >= closest.combat_skill:
-            return battle(faction, closest)
-        elif closest.agreeableness >= 0 and faction.last_action != Action.TRADE:
-            return trade(faction, closest)
-        else:
-            return battle(faction, closest)
+    # 3. Night: the faction rests
+    if tick_number % 3 == 2:
+        return rest(faction)
 
-    # Stay and supply if the hex is comfortable; travel if not
-    has_restless = any(d.disease_type == DiseaseType.RESTLESS for d in faction.diseases.all())
-    if faction.comfort(hex.resources, has_restless) >= 0:
-        return supply(faction, hex)
-    else:
-        best = min(
-            candidate_hexes,
-            key=lambda h: h.terrain_difficulty - h.resources,
-            default=None,
-        )
-        if best:
-            return travel(faction, best, tick_number, weather)
-
-    # Delve if there's a dungeon, resources cover next round, and theology check passes
-    dungeon = hex.pois.filter(poi_type='dungeon', hidden=False).first()
-    if dungeon and faction.resources > modifier(faction.population):
-        if random.randint(1, 12) - modifier(faction.theology) >= 9:
-            return delve(faction, dungeon)
-
-    # Craft or train based on tech headroom
-    if faction.resources > modifier(faction.population) and (faction.technology_max - faction.technology) > 10:
-        return craft(faction)
-
-    return train(faction)
+    # 4. Day: d3 — 1/2 movement (wander), 3 supply
+    roll = random.randint(1, 3)
+    if roll == 3:
+        return supply(faction)
+    if restricted:
+        return travel(faction, random.choice(restricted), tick_number, weather)
+    return rest(faction)
 
 
 def tick_faction(
     faction: Faction,
     tick: Tick,
-    nearby_factions: list[Faction],
     candidate_hexes: list[Hex],
+    allowed_hex_ids: set[int] | None,
     weather: str = 'fair',
 ) -> FactionTick:
-    if not faction.is_gm_faction:
-        result = _select_action(faction, nearby_factions, candidate_hexes, tick.number, weather)
-        faction.last_action = faction.current_action
-        faction.current_action = result.action
-        faction.next_action = None
-    else:
-        result = ActionResult(action=faction.current_action)
-        faction.last_action = faction.current_action
-
-    # Daily: every 3rd tick
-    if tick.number % 3 == 0:
-        faction.speed = faction.max_speed
-        if faction.resources > 0:
-            consumption = modifier(faction.population)
-            if any(d.disease_type == DiseaseType.RAVENOUS for d in faction.diseases.all()):
-                consumption = int(consumption * 1.5)
-            faction.resources = max(0, faction.resources - consumption)
-        if faction.resources == 0:
-            faction.famine_streak += 1
-        else:
-            faction.famine_streak = 0
-
-    # Weekly: every 21st tick
-    if tick.number % 21 == 0:
-        roll = random.randint(1, 20) + faction.population_trend
-        if roll <= 1:
-            faction.population -= 2
-        elif roll <= 3:
-            faction.population -= 1
-        elif roll >= 20:
-            faction.population += 2
-        elif roll >= 18:
-            faction.population += 1
-
-    if faction.population <= 0 and not faction.is_dead:
-        faction.population = 0
-        faction.is_dead = True
+    result = _select_action(faction, candidate_hexes, allowed_hex_ids, tick.number, weather)
+    faction.last_action = faction.current_action
+    faction.current_action = result.action
+    faction.next_action = None
     faction.save()
-    apply_diseases(faction)
 
     return FactionTick.objects.create(
         tick=tick,
@@ -273,14 +213,6 @@ def tick_faction(
         is_mobile=faction.is_mobile,
         speed=faction.speed,
         population=faction.population,
-        technology=faction.technology,
-        technology_max=faction.technology_max,
-        resources=faction.resources,
-        agreeableness=faction.agreeableness,
-        combat_skill=faction.combat_skill,
-        scouting=faction.scouting,
-        theology=faction.theology,
-        famine_streak=faction.famine_streak,
         current_hex=faction.current_hex,
         destination=faction.destination,
         action=result.action,
@@ -335,26 +267,18 @@ def run_shift(map_id: int) -> tuple[int, list[dict]]:
     map_obj.save(update_fields=['current_tick'])
 
     hexes = list(Hex.objects.filter(map_id=map_id).prefetch_related('pois'))
-    factions = list(Faction.objects.filter(current_hex__map_id=map_id, is_dead=False).prefetch_related('diseases', 'allowed_hexes'))
+    factions = list(Faction.objects.filter(current_hex__map_id=map_id, is_dead=False).prefetch_related('allowed_hexes'))
 
     for hex in hexes:
         tick_hex(hex, tick)
 
-    faction_ticks = []
     for faction in factions:
-        nearby = [
-            f for f in factions
-            if f.id != faction.id
-            and f.current_hex
-            and faction.current_hex
-            and hex_distance(faction.current_hex, f.current_hex) <= modifier(faction.scouting)
-        ]
         candidates = adjacent_hexes(faction.current_hex, hexes) if faction.current_hex else []
-        if faction.movement_restricted and not faction.is_gm_faction:
-            allowed_ids = {h.id for h in faction.allowed_hexes.all()}
-            candidates = [h for h in candidates if h.id in allowed_ids]
-        ft = tick_faction(faction, tick, nearby, candidates, map_obj.weather)
-        faction_ticks.append((faction, ft))
+        allowed_ids = (
+            {h.id for h in faction.allowed_hexes.all()}
+            if faction.movement_restricted else None
+        )
+        tick_faction(faction, tick, candidates, allowed_ids, map_obj.weather)
 
     try:
         party = Party.objects.get(map_id=map_id)
@@ -362,286 +286,30 @@ def run_shift(map_id: int) -> tuple[int, list[dict]]:
     except Party.DoesNotExist:
         pass
 
-    events = []
-    for faction, ft in faction_ticks:
-        if ft.action == 'battle':
-            events.append({
-                'type': 'battle',
-                'message': f"{faction.name} fought (roll: {ft.dice_roll})",
-                'faction_id': faction.id,
-                'hex_id': ft.current_hex_id,
-            })
-        if faction.is_famine:
-            events.append({
-                'type': 'famine',
-                'message': f"{faction.name} is starving",
-                'faction_id': faction.id,
-                'hex_id': ft.current_hex_id,
-            })
-        if faction.is_dying:
-            events.append({
-                'type': 'death',
-                'message': f"{faction.name} is collapsing (pop < 20, trend < 0)",
-                'faction_id': faction.id,
-                'hex_id': ft.current_hex_id,
-            })
-
-    return tick.number, events
+    return tick.number, []
 
 
-# --- Faction ---
+# --- Faction actions ---
 
-def supply(faction: Faction, hex: Hex) -> ActionResult:
-    amount = min(faction.resource_generation, hex.resources)
-    faction.resources += amount
-    hex.resources -= amount
-    faction.save()
-    hex.save(update_fields=['resources'])
-    return ActionResult(action=Action.SUPPLY, notes=f"+{amount} resources")
+def supply(faction: Faction) -> ActionResult:
+    """Flavour-only record; the GM narrates supply in the fiction."""
+    return ActionResult(action=Action.SUPPLY)
 
 
-def _roll_disease() -> DiseaseType:
-    roll = random.randint(1, 20)
-    if roll == 1:
-        return DiseaseType.MADNESS
-    elif roll == 2:
-        return DiseaseType.BLACK_DEATH
-    elif roll <= 5:
-        return DiseaseType.THE_RUNS
-    elif roll <= 10:
-        return DiseaseType.RAVENOUS
-    elif roll <= 15:
-        return DiseaseType.BAD_FOOD
-    else:
-        return DiseaseType.RESTLESS
-
-
-def _apply_disease(faction: Faction, disease_type: DiseaseType) -> str:
-    duration = random.randint(1, 6) + random.randint(1, 6)
-    effect_value = 0
-
-    if disease_type == DiseaseType.MADNESS:
-        faction.population -= faction.combat_skill
-        faction.save()
-
-    elif disease_type == DiseaseType.BLACK_DEATH:
-        lost = random.randint(1, 12)
-        faction.population -= lost
-        faction.population_trend_override = -5
-        faction.save()
-        effect_value = lost
-
-    elif disease_type == DiseaseType.THE_RUNS:
-        effect_value = random.randint(1, 12)
-        faction.combat_skill -= effect_value
-        faction.save()
-
-    elif disease_type == DiseaseType.BAD_FOOD:
-        effect_value = faction.scouting // 2
-        faction.scouting -= effect_value
-        faction.save()
-        # speed is halved each tick via apply_diseases since it resets to max_speed
-
-    elif disease_type == DiseaseType.RESTLESS:
-        effect_value = int(faction.scouting * 0.5)
-        faction.scouting += effect_value
-        faction.save()
-
-    ActiveDisease.objects.update_or_create(
-        faction=faction,
-        disease_type=disease_type,
-        defaults={'duration_days_remaining': duration, 'effect_value': effect_value},
-    )
-    return f"contracted {disease_type.label} for {duration} days"
-
-
-def _expire_disease(faction: Faction, disease: ActiveDisease) -> None:
-    dt = disease.disease_type
-
-    if dt == DiseaseType.BLACK_DEATH:
-        faction.population_trend_override = None
-        faction.save()
-
-    elif dt == DiseaseType.THE_RUNS:
-        faction.combat_skill += disease.effect_value
-        faction.save()
-
-    elif dt == DiseaseType.BAD_FOOD:
-        faction.scouting += disease.effect_value
-        faction.save()
-
-    elif dt == DiseaseType.RESTLESS:
-        faction.scouting -= disease.effect_value
-        faction.save()
-
-    disease.delete()
-
-
-def apply_diseases(faction: Faction) -> None:
-    """Apply per-tick disease effects and expire finished diseases. Call after speed reset."""
-    for disease in faction.diseases.all():
-        if disease.disease_type == DiseaseType.BAD_FOOD:
-            faction.speed = faction.speed // 2
-            faction.save()
-
-        disease.duration_days_remaining -= 1
-        if disease.duration_days_remaining <= 0:
-            _expire_disease(faction, disease)
-        else:
-            disease.save()
-
-
-def random_encounter(faction: Faction, hex: Hex) -> str:
-    roll = random.randint(1, 20) + hex.encounter_likelihood
-    if roll <= 1:
-        disease = _roll_disease()
-        return _apply_disease(faction, disease)
-    elif roll <= 5:
-        difficulty = roll - 1
-        return f"monster encounter (difficulty {difficulty})"
-    elif roll <= 17:
-        return ""
-    elif roll == 18:
-        if faction.resources >= faction.technology:
-            faction.resources -= 5
-            faction.technology += 10
-        else:
-            faction.technology -= 5
-            faction.resources += 10
-        faction.save()
-        return "beneficial trade encounter"
-    elif roll == 19:
-        gained = random.randint(1, 6)
-        faction.population += gained
-        faction.save()
-        return f"found wanderers: +{gained} population"
-    else:
-        gained = random.randint(1, 20)
-        faction.resources += gained
-        faction.save()
-        return f"found resources: +{gained}"
+def rest(faction: Faction) -> ActionResult:
+    faction.speed = faction.max_speed
+    faction.save(update_fields=['speed'])
+    return ActionResult(action=Action.REST)
 
 
 def travel(faction: Faction, destination: Hex, tick_number: int, weather: str = 'fair') -> ActionResult:
     cost = move_difficulty(faction.current_hex, destination, tick_number, weather)
     if faction.speed < cost:
-        return supply(faction, faction.current_hex) if faction.current_hex else train(faction)
+        return rest(faction)
     faction.speed -= cost
     faction.current_hex = destination
-    faction.save()
-    encounter_note = random_encounter(faction, destination)
-    notes = f"moved to {destination} (cost {cost})"
-    if encounter_note:
-        notes += f"; {encounter_note}"
-    return ActionResult(action=Action.TRAVEL, notes=notes)
-
-
-def trade(faction: Faction, other: Faction) -> ActionResult:
-    amount = WorldSettings.get().trade_amount
-    offer_resources = faction.resources >= faction.technology
-    if offer_resources:
-        faction.resources -= amount
-        faction.technology += amount
-        other.resources += amount
-        other.technology -= amount
-    else:
-        faction.technology -= amount
-        faction.resources += amount
-        other.technology += amount
-        other.resources -= amount
-
-    # Higher population influences the other's theology toward their own
-    dominant, influenced = (faction, other) if faction.population >= other.population else (other, faction)
-    theo_mod = modifier(dominant.theology)
-    if dominant.theology > influenced.theology:
-        influenced.theology = min(influenced.theology + theo_mod, dominant.theology)
-    elif dominant.theology < influenced.theology:
-        influenced.theology = max(influenced.theology - theo_mod, dominant.theology)
-
-    faction.save()
-    other.save()
-    return ActionResult(action=Action.TRADE)
-
-
-def merge(faction: Faction, other: Faction) -> ActionResult:
-    """Absorb other into faction."""
-    faction.population += other.population
-    faction.resources += other.resources
-    other.population = 0
-    other.save()
-    faction.save()
-    return ActionResult(action=Action.MERGE, notes=f"absorbed {other}")
-
-
-def battle(faction: Faction, other: Faction) -> ActionResult:
-    if other.current_action == Action.TRAVEL:
-        damage = faction.combat_skill // 2
-        other.population -= damage
-        other.speed += 3
-        other.save()
-        return ActionResult(
-            action=Action.BATTLE,
-            success=True,
-            notes=f"{other} was traveling: took {damage} population damage, gained 3 speed",
-        )
-
-    faction_roll = random.randint(1, 20) + faction.combat_skill
-    other_roll = random.randint(1, 20) + other.combat_skill
-
-    if faction_roll >= other_roll:
-        winner, loser = faction, other
-    else:
-        winner, loser = other, faction
-
-    loser.population -= winner.combat_skill
-    winner.combat_skill -= loser.combat_skill // 2
-    winner.resources += winner.combat_skill
-
-    winner.save()
-    loser.save()
-
-    won = winner == faction
-    return ActionResult(
-        action=Action.BATTLE,
-        dice_roll=faction_roll,
-        success=won,
-        notes=f"{'won' if won else 'lost'} vs {other}",
-    )
-
-
-def train(faction: Faction) -> ActionResult:
-    roll = random.randint(1, 6)
-    faction.combat_skill = min(faction.combat_skill + roll, faction.combat_skill_max)
-    faction.save()
-    return ActionResult(action=Action.TRAIN, dice_roll=roll, notes=f"+{roll} combat_skill")
-
-
-def craft(faction: Faction) -> ActionResult:
-    roll = random.randint(1, 6)
-    faction.technology = min(faction.technology + roll, faction.technology_max)
-    faction.save()
-    return ActionResult(action=Action.CRAFT, dice_roll=roll, notes=f"+{roll} technology")
-
-
-def search(faction: Faction, hex: Hex) -> ActionResult:
-    hex.pois.filter(hidden=False).update(player_visible=True)
-    return ActionResult(action=Action.SEARCH, notes="all POIs on hex revealed")
-
-
-def delve(faction: Faction, dungeon) -> ActionResult:
-    roll = random.randint(1, 20)
-    total = roll + modifier(faction.combat_skill)
-    success = total >= dungeon.difficulty
-    faction.theology = max(0, faction.theology - 5)
-    if success:
-        faction.technology_max += dungeon.technology_max_modifier
-    faction.save()
-    return ActionResult(
-        action=Action.DELVE,
-        dice_roll=roll,
-        success=success,
-        notes=f"rolled {total} vs difficulty {dungeon.difficulty}",
-    )
+    faction.save(update_fields=['speed', 'current_hex'])
+    return ActionResult(action=Action.TRAVEL, notes=f"moved to {destination} (cost {cost})")
 
 
 # --- Party actions ---

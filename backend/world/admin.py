@@ -5,8 +5,7 @@ from django.core.exceptions import ValidationError
 from .utils import adjacent_hexes
 from .models import (
     Map, Hex, PointOfInterest,
-    Faction, ActiveDisease,
-    Knowledge,
+    Faction,
     Tick, HexTick, FactionTick,
     WorldSettings,
     Party,
@@ -32,7 +31,7 @@ def disable_fog_of_war(modeladmin, request, queryset):
 
 @admin.register(Map)
 class MapAdmin(admin.ModelAdmin):
-    list_display = ('name', 'map_type', 'current_tick', 'fog_of_war')
+    list_display = ('name', 'map_type', 'current_tick', 'fog_of_war', 'reveal_mode')
     actions = [enable_fog_of_war, disable_fog_of_war]
 
 
@@ -103,32 +102,25 @@ class HexAdmin(admin.ModelAdmin):
         return queryset, use_distinct
 
 
-class ActiveDiseaseInline(admin.TabularInline):
-    model = ActiveDisease
-    extra = 0
-    fields = ('disease_type', 'duration_days_remaining', 'effect_value')
-    readonly_fields = ('effect_value',)
-
-
 @admin.register(Faction)
 class FactionAdmin(admin.ModelAdmin):
-    list_display = ('name', 'population', 'resources', 'technology', 'combat_skill', 'current_hex')
-    list_filter = ('is_mobile',)
+    list_display = ('name', 'population', 'current_action', 'current_hex')
+    list_filter = ('is_mobile', 'is_dead')
     search_fields = ('name',)
-    readonly_fields = ('last_action', 'famine_streak', 'population_trend_override')
+    readonly_fields = ('last_action',)
     fieldsets = (
         (None, {
-            'fields': ('name', 'is_mobile', 'current_hex', 'destination', 'image'),
+            'fields': ('name', 'leader', 'color', 'is_mobile', 'is_dead',
+                       'current_hex', 'destination', 'image'),
         }),
-        ('Stats', {
-            'fields': ('population', 'technology', 'technology_max', 'resources',
-                       'agreeableness', 'combat_skill', 'scouting', 'theology', 'speed'),
+        ('Movement', {
+            'fields': ('speed', 'max_speed', 'population',
+                       'movement_restricted', 'allowed_hexes'),
         }),
         ('State', {
-            'fields': ('current_action', 'last_action', 'famine_streak', 'population_trend_override'),
+            'fields': ('current_action', 'next_action', 'last_action', 'notes'),
         }),
     )
-    inlines = [ActiveDiseaseInline]
 
 
 class POIMapFilter(admin.SimpleListFilter):
@@ -179,7 +171,7 @@ class PointOfInterestAdmin(admin.ModelAdmin):
             'fields': ('difficulty', 'description', 'notes', 'technology_max_modifier'),
         }),
         ('Relations', {
-            'fields': ('faction', 'monster_type', 'knowledge'),
+            'fields': ('faction', 'monster_type'),
         }),
     )
 
@@ -200,7 +192,7 @@ class HexTickInline(admin.TabularInline):
 class FactionTickInline(admin.TabularInline):
     model = FactionTick
     extra = 0
-    readonly_fields = ('faction', 'population', 'resources', 'technology', 'combat_skill', 'action', 'dice_roll')
+    readonly_fields = ('faction', 'population', 'speed', 'action', 'dice_roll')
     can_delete = False
 
 
@@ -213,19 +205,10 @@ class HexTickAdmin(admin.ModelAdmin):
 
 @admin.register(FactionTick)
 class FactionTickAdmin(admin.ModelAdmin):
-    list_display = ('tick', 'faction', 'action', 'dice_roll', 'population', 'resources')
+    list_display = ('tick', 'faction', 'action', 'dice_roll', 'population')
     list_filter = ('tick', 'action')
-    readonly_fields = ('tick', 'faction', 'is_mobile', 'speed', 'population', 'technology',
-                       'technology_max', 'resources', 'agreeableness', 'combat_skill',
-                       'scouting', 'theology', 'famine_streak', 'current_hex', 'destination',
-                       'action', 'dice_roll')
-
-
-@admin.register(Knowledge)
-class KnowledgeAdmin(admin.ModelAdmin):
-    list_display = ('title', 'do_players_know')
-    list_filter = ('do_players_know',)
-    search_fields = ('title',)
+    readonly_fields = ('tick', 'faction', 'is_mobile', 'speed', 'population',
+                       'current_hex', 'destination', 'action', 'dice_roll')
 
 
 class PartyAdminForm(forms.ModelForm):

@@ -12,7 +12,6 @@ from .common import api, tick_stream, _redis  # noqa: F401
 from .maps import router as maps_router
 from .hexes import router as hexes_router
 from .factions import router as factions_router
-from .knowledge import router as knowledge_router
 from .tick import router as tick_router
 from .party import router as party_router
 from .gallery import router as gallery_router
@@ -20,7 +19,6 @@ from .gallery import router as gallery_router
 api.add_router("/", maps_router)
 api.add_router("/", hexes_router)
 api.add_router("/", factions_router)
-api.add_router("/", knowledge_router)
 api.add_router("/", tick_router)
 api.add_router("/", party_router)
 api.add_router("/", gallery_router)

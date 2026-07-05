@@ -40,14 +40,6 @@ class FactionTick(models.Model):
     is_mobile = models.BooleanField()
     speed = models.IntegerField()
     population = models.IntegerField()
-    technology = models.IntegerField()
-    technology_max = models.IntegerField()
-    resources = models.IntegerField()
-    agreeableness = models.IntegerField()
-    combat_skill = models.IntegerField()
-    scouting = models.IntegerField()
-    theology = models.IntegerField()
-    famine_streak = models.IntegerField()
     current_hex = models.ForeignKey(
         Hex, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
     )
