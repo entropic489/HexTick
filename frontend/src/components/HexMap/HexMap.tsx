@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
 import type { Hex, Faction, Map } from '../../types';
 import { HexCell } from './HexCell';
-import { mapBounds, hexToPixel } from './hexGeometry';
+import { mapBounds, hexToPixel, flatTopPoints } from './hexGeometry';
 import styles from './HexMap.module.css';
 
 function shortenLine(
@@ -250,6 +250,34 @@ export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fa
             preserveAspectRatio="none"
           />
         )}
+
+        {/* Two-layer reveal: detailed "true" map, clipped to visible hexes on the player
+            view (fogOfWar) so players can see where they're travelling to, not just where
+            they've been. On the GM view (fogOfWar=false) it renders fully, unclipped. */}
+        {map.reveal_mode === 'two_layer' && map.detail_image && (
+          <>
+            {fogOfWar && (
+              <defs>
+                <clipPath id="explored-clip">
+                  {hexes.filter((h) => h.player_visible).map((h) => {
+                    const [cx, cy] = hexToPixel(h.row, h.col, map.hex_size, map.origin_x, map.origin_y);
+                    return <polygon key={h.id} points={flatTopPoints(cx, cy, map.hex_size)} />;
+                  })}
+                </clipPath>
+              </defs>
+            )}
+            <image
+              href={map.detail_image}
+              x={0}
+              y={0}
+              width={imgSize?.w ?? svgWidth}
+              height={imgSize?.h ?? svgHeight}
+              preserveAspectRatio="none"
+              clipPath={fogOfWar ? 'url(#explored-clip)' : undefined}
+            />
+          </>
+        )}
+
 {hexes.map((hex) => (
           <HexCell
             key={hex.id}
@@ -263,6 +291,7 @@ export function HexMap({ map, hexes, factions, selectedHexId, selectedHexIds, fa
             factionAllowed={factionAllowedHexIds?.has(hex.id) ?? false}
             randomHighlight={hex.id === randomHexId}
             fogOfWar={fogOfWar}
+            revealMode={map.reveal_mode}
             onClick={onHexClick}
           />
         ))}

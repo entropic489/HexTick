@@ -1,90 +1,12 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getMap, getFactions, getKnowledge, patchFaction } from '../../api/maps';
+import { getMap, getFactions, patchFaction } from '../../api/maps';
 import { useGameStore } from '../../store/useGameStore';
-import type { Faction, Knowledge } from '../../types';
+import type { Faction } from '../../types';
 import styles from './FactionsPage.module.css';
 
-type EditDraft = Partial<Omit<Faction, 'id' | 'is_famine' | 'is_dying' | 'max_speed' | 'last_action' | 'current_action'>>;
-
-function KnowledgeDropdown({
-  options,
-  selected,
-  onChange,
-}: {
-  options: Knowledge[];
-  selected: number[];
-  onChange: (ids: number[]) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
-
-  const selectedItems = options.filter((o) => selected.includes(o.id));
-  const filtered = options.filter(
-    (o) => !selected.includes(o.id) && o.title.toLowerCase().includes(query.toLowerCase())
-  );
-
-  function add(id: number) {
-    onChange([...selected, id]);
-    setQuery('');
-  }
-
-  function remove(id: number) {
-    onChange(selected.filter((x) => x !== id));
-  }
-
-  return (
-    <div className={styles.dropdownWrap} ref={containerRef}>
-      <div className={styles.dropdownControl} onClick={() => setOpen(true)}>
-        {selectedItems.map((item) => (
-          <span key={item.id} className={styles.selectedTag}>
-            {item.title}
-            <button
-              className={styles.tagRemove}
-              onClick={(e) => { e.stopPropagation(); remove(item.id); }}
-            >
-              ✕
-            </button>
-          </span>
-        ))}
-        <input
-          className={styles.dropdownInput}
-          value={query}
-          placeholder={selectedItems.length === 0 ? 'Search…' : ''}
-          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-        />
-      </div>
-      {open && filtered.length > 0 && (
-        <div className={styles.dropdownMenu}>
-          {filtered.map((item) => (
-            <div
-              key={item.id}
-              className={styles.dropdownOption}
-              onMouseDown={(e) => { e.preventDefault(); add(item.id); }}
-            >
-              {item.title}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-
+type EditDraft = Partial<Omit<Faction, 'id' | 'max_speed' | 'last_action' | 'current_action'>>;
 
 function StatField({
   label,
@@ -118,12 +40,10 @@ function StatField({
 function FactionRow({
   faction,
   mapId,
-  allKnowledge,
   onShowOnMap,
 }: {
   faction: Faction;
   mapId: number;
-  allKnowledge: Knowledge[];
   onShowOnMap: (hexId: number) => void;
 }) {
   const queryClient = useQueryClient();
@@ -145,14 +65,8 @@ function FactionRow({
       color: faction.color,
       speed: faction.speed,
       population: faction.population,
-      technology: faction.technology,
-      resources: faction.resources,
-      combat_skill: faction.combat_skill,
-      agreeableness: faction.agreeableness,
-      theology: faction.theology,
       is_mobile: faction.is_mobile,
-      is_gm_faction: faction.is_gm_faction,
-      knowledge: faction.knowledge,
+      is_dead: faction.is_dead,
       leader: faction.leader,
     });
     setEditing(true);
@@ -164,7 +78,6 @@ function FactionRow({
   }
 
   const d = draft as Required<EditDraft>;
-  const knowledgeTitles = allKnowledge.filter((k) => faction.knowledge.includes(k.id));
 
   return (
     <div className={styles.row}>
@@ -192,9 +105,7 @@ function FactionRow({
         )}
 
         <span className={styles.badges}>
-          {faction.is_gm_faction && <span className={styles.badge}>GM</span>}
-          {faction.is_famine && <span className={`${styles.badge} ${styles.badgeDanger}`}>Famine</span>}
-          {faction.is_dying && <span className={`${styles.badge} ${styles.badgeDanger}`}>Dying</span>}
+          {faction.is_dead && <span className={`${styles.badge} ${styles.badgeDanger}`}>Dead</span>}
         </span>
 
         <span className={styles.rowActions}>
@@ -225,12 +136,11 @@ function FactionRow({
 
       <div className={styles.stats}>
         <StatField label="Pop" value={editing ? d.population ?? 0 : faction.population} editing={editing} onChange={(v) => setDraft((p) => ({ ...p, population: v }))} />
-        <StatField label="Res" value={editing ? d.resources ?? 0 : faction.resources} editing={editing} onChange={(v) => setDraft((p) => ({ ...p, resources: v }))} />
-        <StatField label="Tech" value={editing ? d.technology ?? 0 : faction.technology} editing={editing} onChange={(v) => setDraft((p) => ({ ...p, technology: v }))} />
-        <StatField label="Combat" value={editing ? d.combat_skill ?? 0 : faction.combat_skill} editing={editing} onChange={(v) => setDraft((p) => ({ ...p, combat_skill: v }))} />
-        <StatField label="Agree" value={editing ? d.agreeableness ?? 0 : faction.agreeableness} editing={editing} onChange={(v) => setDraft((p) => ({ ...p, agreeableness: v }))} />
-        <StatField label="Theology" value={editing ? d.theology ?? 90 : faction.theology} editing={editing} onChange={(v) => setDraft((p) => ({ ...p, theology: v }))} />
         <StatField label="Speed" value={editing ? d.speed ?? 0 : faction.speed} editing={editing} onChange={(v) => setDraft((p) => ({ ...p, speed: v }))} />
+        <span className={styles.stat}>
+          <span className={styles.statLabel}>Max</span>
+          <span className={styles.statValue}>{faction.max_speed}</span>
+        </span>
         <span className={styles.stat}>
           <span className={styles.statLabel}>Action</span>
           <span className={styles.statValue}>{faction.current_action ?? '—'}</span>
@@ -238,7 +148,7 @@ function FactionRow({
         {editing && (
           <span className={styles.flags}>
             <label><input type="checkbox" checked={d.is_mobile ?? true} onChange={(e) => setDraft((p) => ({ ...p, is_mobile: e.target.checked }))} /> Mobile</label>
-            <label><input type="checkbox" checked={d.is_gm_faction ?? false} onChange={(e) => setDraft((p) => ({ ...p, is_gm_faction: e.target.checked }))} /> GM</label>
+            <label><input type="checkbox" checked={d.is_dead ?? false} onChange={(e) => setDraft((p) => ({ ...p, is_dead: e.target.checked }))} /> Dead</label>
           </span>
         )}
       </div>
@@ -261,26 +171,6 @@ function FactionRow({
           <span className={styles.knowledgeTag}>{faction.leader}</span>
         </div>
       )}
-
-      {editing && allKnowledge.length > 0 && (
-        <div className={styles.knowledgeRow}>
-          <span className={styles.statLabel}>Knowledge</span>
-          <KnowledgeDropdown
-            options={allKnowledge}
-            selected={d.knowledge ?? []}
-            onChange={(ids) => setDraft((p) => ({ ...p, knowledge: ids }))}
-          />
-        </div>
-      )}
-
-      {!editing && knowledgeTitles.length > 0 && (
-        <div className={styles.knowledgeTags}>
-          <span className={styles.statLabel}>Knowledge</span>
-          {knowledgeTitles.map((k) => (
-            <span key={k.id} className={styles.knowledgeTag}>{k.title}</span>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -295,7 +185,6 @@ export function FactionsPage() {
 
   const { data: map } = useQuery({ queryKey: ['map', id], queryFn: () => getMap(id) });
   const { data: factions = [] } = useQuery({ queryKey: ['factions', id], queryFn: () => getFactions(id) });
-  const { data: allKnowledge = [] } = useQuery({ queryKey: ['knowledge', id], queryFn: () => getKnowledge(id) });
 
   const filtered = factions.filter((f) =>
     f.name.toLowerCase().includes(search.toLowerCase())
@@ -329,7 +218,7 @@ export function FactionsPage() {
           <div className={styles.empty}>No factions found.</div>
         )}
         {filtered.map((f) => (
-          <FactionRow key={f.id} faction={f} mapId={id} allKnowledge={allKnowledge} onShowOnMap={handleShowOnMap} />
+          <FactionRow key={f.id} faction={f} mapId={id} onShowOnMap={handleShowOnMap} />
         ))}
       </div>
     </div>

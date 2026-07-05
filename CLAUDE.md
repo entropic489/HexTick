@@ -53,17 +53,16 @@ docker exec hextick-frontend-1 npx tsc --noEmit
         __init__.py             # re-exports everything; import from here
         world.py                # Map, AgeChoices, WeatherType, MapType
         hex.py                  # Hex, TerrainType, POIType, PointOfInterest
-        faction.py              # Faction, Action, DiseaseType, ActiveDisease
-        characters.py           # Item, Knowledge, Character, CharacterTick
+        faction.py              # Faction, Action
         ticks.py                # Tick, HexTick, FactionTick, PartyTick
         party.py                # Party
         settings.py             # WorldSettings singleton
       api/                      # Django Ninja API, split into per-resource routers
         __init__.py             # builds the NinjaAPI, mounts every router at '/'
         common.py               # api instance, _redis, SSE helpers (publish/broadcast_tick/tick_stream), shared tick schemas
-        maps.py hexes.py factions.py knowledge.py tick.py party.py gallery.py
+        maps.py hexes.py factions.py tick.py party.py gallery.py
         # Routers are thin: validate/serialize + SSE plumbing. Error paths call common.api.create_response.
-      actions.py                # ALL game logic — tick, actions, encounters, diseases.
+      actions.py                # ALL game logic — faction/hex/party tick, party actions.
                                 # run_shift() (shift orchestration) and perform_party_action()
                                 # (party action rules, raises PartyActionError) live here; the
                                 # tick.py/party.py routers call them.
@@ -97,14 +96,14 @@ Backend tests use **pytest + pytest-django**, not `manage.py test`. Config lives
 
 Run via `pdm run test` (a `[tool.pdm.scripts]` entry) — this sources `.env` then forces `USE_SQLITE=true` regardless of what `.env` has for the Postgres vars, since `.env`'s `DB_HOST=db` only resolves inside Docker Compose. Add coverage with `pdm run test --cov=world --cov-report=term-missing` (the `world` package is on `pythonpath`).
 
-Engine tests live in `backend/world/tests/`. `conftest.py` provides DB-backed factory fixtures (`map_factory`, `hex_factory`, `faction_factory`) — each creates the minimal valid instance and lets kwargs override fields; factories build their own dependency (e.g. `hex_factory` makes a `map_factory()` if none is passed). Note `max_speed`, `combat_skill_max`, `resource_generation`, `population_trend` on `Faction` are **read-only computed properties** — never pass them to a factory/create.
+Engine tests live in `backend/world/tests/`. `conftest.py` provides DB-backed factory fixtures (`map_factory`, `hex_factory`, `faction_factory`) — each creates the minimal valid instance and lets kwargs override fields; factories build their own dependency (e.g. `hex_factory` makes a `map_factory()` if none is passed).
 
-**API tests live in `backend/world/tests/api/`** — one module per resource (`test_maps`/`test_hexes`/`test_factions`/`test_knowledge`/`test_tick`/`test_party`/`test_gallery`), grouped to mirror the planned router split (`design_docs/code-review.md` §1.2) so each file can move next to its router. They are **pinning/characterization tests** locking current behavior so that split is verifiable as behavior-preserving. Harness in `tests/api/conftest.py`:
+**API tests live in `backend/world/tests/api/`** — one module per resource (`test_maps`/`test_hexes`/`test_factions`/`test_tick`/`test_party`/`test_gallery`), grouped to mirror the router split so each file sits next to its router. They are **pinning/characterization tests** locking current behavior so that split is verifiable as behavior-preserving. Harness in `tests/api/conftest.py`:
 - Drives the real Django URLconf (`/api/...`) via a `django.test.Client` JSON wrapper (`client` fixture) constructed with `raise_request_exception=False`, so known-crash paths (H6/H7) can be pinned by status code (500) instead of raising. Use `.post_multipart(...)` for the `File`/`Form` endpoints (`create_map`, gallery upload).
 - Replaces module-level `world.api._redis` with a **recording fake** (autouse `fake_redis`), since some endpoints publish synchronously (`locked`/`weather`/`highlight`/gallery `publish`) while `on_commit` broadcasts stay silent under the rolled-back test transaction (use `django_capture_on_commit_callbacks(execute=True)` to force + assert those).
 - **Overrides `map_factory`** to give maps a non-empty `image` name — `MapSchema.image` is typed `str` and Ninja's `FieldFile` encoder returns `None` for an empty `ImageField` (a 500 on serialize). This override flows into `hex_factory`/`faction_factory` too.
 
-Some tests intentionally **pin current, known-buggy behavior** documented in `design_docs/code-review.md` rather than the intended behavior — marked with a `CHARACTERIZATION — pins <id>` comment (H2/H4/H5/H6/H7/M1/M2/M3/M7/M8). Expect each to need rewriting the moment its finding is fixed, not to stay green forever (e.g. the M1 pin in `test_diseases.py::test_recontraction_before_expiry_reapplies_stat_effect`).
+Some tests intentionally **pin current, known-buggy behavior** documented in `design_docs/code-review.md` rather than the intended behavior — marked with a `CHARACTERIZATION — pins <id>` comment (remaining: H5/H6/H7/M3/M8). Expect each to need rewriting the moment its finding is fixed. (The faction-simplification pass removed the H1/H2/M1/M2 pins by deleting the behavior they described.)
 
 ### Frontend tests
 
@@ -137,9 +136,9 @@ The container's `node_modules` is an anonymous volume (see `docker-compose.yml`)
 
 **`actions.py` is the game engine.** It imports models freely. Models never import from `actions.py`.
 
-**Tick records are immutable.** `HexTick`, `FactionTick`, `CharacterTick` are history. Never update them after creation. All fields are `readonly_fields` in admin. `PartyTick` is the exception: on city maps, sub-tick actions within the same shift reuse the same `(tick, party)` record via `update_or_create` — the record is updated in place until the shift tick fires.
+**Tick records are immutable.** `HexTick`, `FactionTick` are history. Never update them after creation. All fields are `readonly_fields` in admin. `PartyTick` is the exception: on city maps, sub-tick actions within the same shift reuse the same `(tick, party)` record via `update_or_create` — the record is updated in place until the shift tick fires.
 
-**`WorldSettings` is a singleton.** `save()` always forces `pk=1`. Always access via `WorldSettings.get()`. Holds `trade_amount` and `hex_resource_tick_modifier` — no tick state.
+**`WorldSettings` is a singleton.** `save()` always forces `pk=1`. Always access via `WorldSettings.get()`. Holds `hex_resource_tick_modifier` — no tick state.
 
 **Tick sequence is per-map.** `Map.current_tick` is the single source of truth for each map's tick number. `Tick` has a `map` FK; `unique_together = [('map', 'number')]`. `tick.number % 3 == 0` is a day; `tick.number % 21 == 0` is a week. Tick 0 never exists.
 
@@ -169,7 +168,7 @@ The container's `node_modules` is an anonymous volume (see `docker-compose.yml`)
 
 ## Non-obvious quirks
 
-**`AgeChoices` and `WeatherType` live in `world.py`**, not alongside the models that use them. `PointOfInterest.age` and `Knowledge.age` import `AgeChoices` from there. `WeatherType` was moved from `hex.py` to `world.py` to avoid a circular import (`hex.py` imports `Map` from `world.py`, so `world.py` cannot import from `hex.py`).
+**`AgeChoices` and `WeatherType` live in `world.py`**, not alongside the models that use them. `PointOfInterest.age` imports `AgeChoices` from there. `WeatherType` was moved from `hex.py` to `world.py` to avoid a circular import (`hex.py` imports `Map` from `world.py`, so `world.py` cannot import from `hex.py`).
 
 **`TerrainType` is not a `TextChoices` enum.** It's a custom `str` subclass with `terrain_difficulty` and `resource_generation` as instance attributes. Use `TerrainType.from_value(str)` to look up by DB value. `terrain_difficulty` and `resource_generation` on `Hex` are `@property` — do not add them as DB columns.
 
@@ -187,17 +186,13 @@ The container's `node_modules` is an anonymous volume (see `docker-compose.yml`)
 
 **`HexTick` does not copy POIs** — they are accessed live via `hex.pois.all()`.
 
-**Restless halves `comfort()`** — `comfort()` takes `has_restless: bool`. Callers in `actions.py` compute it via `any(d.disease_type == DiseaseType.RESTLESS for d in faction.diseases.all())` against the prefetched queryset.
-
-**Disease re-contraction uses `update_or_create`** — resets duration rather than stacking.
-
 ---
 
 ## Faction movement restriction
 
 `Faction.movement_restricted` (BooleanField, default False) + `Faction.allowed_hexes` (M2M to `Hex`, related name `restricted_factions`).
 
-When `movement_restricted=True` and the faction is not a GM faction, `run_shift` filters `candidates` to only hexes in `allowed_hexes` before passing to `tick_faction`. GM factions are always under manual control and are not affected.
+When `movement_restricted=True`, `run_shift` passes the `allowed_hexes` id set to `tick_faction`; only autonomous daytime **wandering** is confined to it. A GM-set `destination` (or `next_action`) deliberately **overrides** the restriction — a GM path ignores `allowed_hexes`.
 
 The GM sets `allowed_hexes` via the faction edit form in `HexPanel`: check "Movement restricted", click "Select hexes" to enter `factionHexSelectMode` in Zustand, click hexes on the map (teal highlight, distinct from multi-select gold), then "Done selecting". On save, `PATCH /api/factions/{id}/` sends `movement_restricted` and `allowed_hexes` (list of IDs, `.set()` on the backend like `knowledge`).
 
@@ -205,31 +200,29 @@ Frontend store keys: `factionHexSelectMode`, `factionAllowedHexIds`, `setFaction
 
 ---
 
-## Faction types
+## Factions
 
-| Flag | Auto-tick | Notes |
-|---|---|---|
-| `is_gm_faction = True` | No | GM sets action via frontend modal |
-| neither | Yes | `_select_action` runs each tick |
+Factions are deliberately simple: the GM narrates faction actions in the fiction, so the
+engine only moves them around and records a snapshot. **All** factions auto-tick via
+`_select_action` (there is no `is_gm_faction` flag). Faction actions are only **SUPPLY,
+TRAVEL, REST** — `Action` also defines SEARCH/EXPLORE/SOCIAL/DELVE but those are Party-only.
 
-Dead factions (`is_dead = True`, set when `population <= 0`) are excluded from `run_shift` entirely and do not tick.
+Dead factions (`is_dead = True`, a manual GM flag — factions no longer die from any engine
+path) are excluded from `run_shift` entirely and do not tick.
 
-## `_select_action` priority (NPC factions only)
+## `_select_action` ladder (all factions)
 
-Travel always moves one adjacent hex per tick (via `adjacent_hexes()`), never teleports. `travel()` falls back to supply/train if `faction.speed < terrain_difficulty`.
+`travel()` moves one adjacent hex, deducting `move_difficulty` cost; if `speed < cost` it
+rests instead. `rest()` sets `speed = max_speed`. `supply()` is a flavour-only record.
 
-1. `faction.destination` set → step one adjacent hex toward destination, detouring around disagreeable factions (`agreeableness < 50`). Clears destination on arrival.
-2. Disagreeable faction in scouting range AND `last_action != BATTLE` → battle (same hex) or step toward them
-3. Outmatched (`combat_skill < closest.combat_skill`) → flee to best adjacent hex
-4. `agreeableness < 0` and not outmatched → battle
-5. `closest.agreeableness >= 0` AND `last_action != TRADE` → trade
-6. `comfort(hex.resources) >= 0` → supply
-7. `comfort < 0` → travel to best adjacent hex (min `terrain_difficulty - resources`)
-8. Dungeon on hex (`hidden=False`) AND `resources > population` AND `d12 - modifier(theology) >= 9` → delve
-9. `resources > population` AND `technology_max - technology > 10` → craft
-10. Default → train
+1. `faction.next_action` set → perform it (SUPPLY/TRAVEL/REST), then `tick_faction` clears it. TRAVEL steps toward `destination` if set, else wanders. (This is the H1 fix — next_action is now consumed.)
+2. `faction.destination` set → step one hex toward it (**ignores** `movement_restricted`/`allowed_hexes` — a GM destination overrides restrictions). Clears destination on arrival.
+3. Night (`tick % 3 == 2`) → REST.
+4. Day → roll d3: 1–2 = TRAVEL (wander to a random allowed adjacent hex), 3 = SUPPLY.
 
-BATTLE and TRADE each have a 1-tick cooldown via `last_action`.
+`run_shift` passes `allowed_hex_ids` (a set, or `None` when unrestricted); only rule-4
+wandering honors it. There is no faction-vs-faction interaction, scouting, combat, economy,
+or disease logic anymore.
 
 ## Party
 
@@ -274,33 +267,9 @@ The GM view has two modes toggled by the **Prep / Play** button in the top bar. 
 
 **Move party** — in view mode, a "Move party here" button appears (right-aligned, above the party footer) whenever the selected hex is not the party's current hex. It calls `PATCH /api/party/{id}/` with `{ current_hex: hex.id }` — no speed-gating, GM teleport only.
 
-**Add Faction** — the `+ Add Faction` button in edit mode opens `AddFactionModal`. Fields: name, color (hex color picker + text), speed, population, technology, resources, combat_skill, agreeableness, theology, location (current hex, defaults to the selected hex), and faction type flags (mobile, GM faction, player faction). Destination is not set at creation. Created via `POST /maps/{map_id}/factions/`.
+**Add Faction** — the `+ Add Faction` button in edit mode opens `AddFactionModal`. Fields: name, color (hex color picker + text), speed, max_speed, population, location (current hex, defaults to the selected hex), and the `mobile` flag. Destination is not set at creation. Created via `POST /maps/{map_id}/factions/`. The HexPanel faction detail also has a **"Path toward party"** button that PATCHes `destination = party.current_hex`.
 
 **Faction arrows** — rendered in `HexMap` as an SVG layer above hex cells. Each faction with a `current_hex` gets a three-layer arrow (glow halo + solid shaft + white highlight, with a custom arrowhead marker per color). Factions with a `destination` draw a movement arrow from their hex to the destination; factions without a destination draw a short upward arrow on their hex. The 2-letter label in each hex also uses the faction's color.
-
----
-
-## Knowledge
-
-`Knowledge` has a `map` FK (`CASCADE`). The frontend page lives at `/map/:mapId/knowledge` and fetches only knowledge for that map.
-
-`related_knowledge` is a **directional** (asymmetrical) self-referential M2M. A→B does not imply B→A. The API accepts a list of IDs on both `POST /knowledge/` and `PATCH /knowledge/{id}/` and calls `.set()` to replace the full relation.
-
-Both `Faction` and `Character` have a `knowledge` M2M to `Knowledge`. Exposed as `list[int]` (IDs) on their schemas. Editable via `PATCH /api/factions/{id}/` and `PATCH /api/characters/{id}/` by passing a `knowledge` list — replaces the full relation with `.set()`.
-
-The `KnowledgePage` is a GM-only view (linked from the GMPage header). No player-facing knowledge UI exists.
-
----
-
-## Characters
-
-`Character` lives in `models/characters.py`. Characters belong to a `Faction` (FK, nullable) and optionally have a `current_hex`. The list endpoint returns characters where `current_hex` or `faction.current_hex` is on the requested map.
-
-**API**: `GET /maps/{map_id}/characters/`, `POST /maps/{map_id}/characters/`, `PATCH /characters/{id}/`.
-
-**Frontend**: `CharactersPage` at `/map/:mapId/characters`, linked from the GMPage header. Inline edit row (all fields) + create modal. Knowledge multi-select uses the same `KnowledgeDropdown` pattern as `KnowledgePage`.
-
-**`resolve_knowledge` pattern** — both `FactionSchema` and `CharacterSchema` resolve knowledge IDs as `[k.id for k in obj.knowledge.all()]`. Do NOT use `.values_list()` here — it bypasses the prefetch cache and causes N+1 queries. The list endpoints use `.prefetch_related('knowledge')` and a single `Q`-filtered queryset (not `|` union) to avoid Django's "cannot combine unique with non-unique" error.
 
 ---
 

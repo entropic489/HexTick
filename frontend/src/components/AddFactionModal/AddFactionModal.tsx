@@ -15,28 +15,20 @@ interface Draft {
   name: string;
   color: string;
   speed: number;
+  max_speed: number;
   population: number;
-  technology: number;
-  resources: number;
-  combat_skill: number;
   current_hex: number | null;
   is_mobile: boolean;
-  is_gm_faction: boolean;
-  agreeableness: number;
 }
 
 const DEFAULT_DRAFT: Draft = {
   name: '',
   color: '#89b4fa',
-  speed: 3,
+  speed: 4,
+  max_speed: 4,
   population: 10,
-  technology: 5,
-  resources: 10,
-  combat_skill: 5,
   current_hex: null,
   is_mobile: true,
-  is_gm_faction: false,
-  agreeableness: 0,
 };
 
 function hexLabel(hex: Hex): string {
@@ -117,33 +109,18 @@ export function AddFactionModal({ mapId, hexes, defaultHexId, onClose }: Props) 
 
           <div className={styles.row}>
             <span className={styles.label}>Speed</span>
-            <input className={styles.input} type="number" min={1} value={draft.speed}
+            <input className={styles.input} type="number" min={0} value={draft.speed}
               onChange={(e) => set('speed', Number(e.target.value))} />
+          </div>
+          <div className={styles.row}>
+            <span className={styles.label}>Max speed</span>
+            <input className={styles.input} type="number" min={1} value={draft.max_speed}
+              onChange={(e) => set('max_speed', Number(e.target.value))} />
           </div>
           <div className={styles.row}>
             <span className={styles.label}>Population</span>
             <input className={styles.input} type="number" min={0} value={draft.population}
               onChange={(e) => set('population', Number(e.target.value))} />
-          </div>
-          <div className={styles.row}>
-            <span className={styles.label}>Technology</span>
-            <input className={styles.input} type="number" min={0} value={draft.technology}
-              onChange={(e) => set('technology', Number(e.target.value))} />
-          </div>
-          <div className={styles.row}>
-            <span className={styles.label}>Resources</span>
-            <input className={styles.input} type="number" min={0} value={draft.resources}
-              onChange={(e) => set('resources', Number(e.target.value))} />
-          </div>
-          <div className={styles.row}>
-            <span className={styles.label}>Combat skill</span>
-            <input className={styles.input} type="number" min={0} value={draft.combat_skill}
-              onChange={(e) => set('combat_skill', Number(e.target.value))} />
-          </div>
-          <div className={styles.row}>
-            <span className={styles.label}>Agreeableness</span>
-            <input className={styles.input} type="number" value={draft.agreeableness}
-              onChange={(e) => set('agreeableness', Number(e.target.value))} />
           </div>
 
           <div className={styles.checks}>
@@ -151,11 +128,6 @@ export function AddFactionModal({ mapId, hexes, defaultHexId, onClose }: Props) 
               <input type="checkbox" checked={draft.is_mobile}
                 onChange={(e) => set('is_mobile', e.target.checked)} />
               Mobile
-            </label>
-            <label className={styles.checkLabel}>
-              <input type="checkbox" checked={draft.is_gm_faction}
-                onChange={(e) => set('is_gm_faction', e.target.checked)} />
-              GM faction
             </label>
           </div>
         </div>

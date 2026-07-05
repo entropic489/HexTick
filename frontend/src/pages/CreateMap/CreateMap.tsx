@@ -37,6 +37,9 @@ export function CreateMap() {
   const [imgNatural, setImgNatural] = useState<{ w: number; h: number } | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [origin, setOrigin] = useState({ x: 0, y: 0 });
+  const [revealMode, setRevealMode] = useState<'grey_fog' | 'two_layer'>('grey_fog');
+  const [detailFile, setDetailFile] = useState<File | null>(null);
+  const detailFileRef = useRef<HTMLInputElement>(null);
 
   // Editor pan/zoom state (in SVG pixel space)
   const [zoom, setZoom] = useState(1);
@@ -147,7 +150,9 @@ export function CreateMap() {
       hex_size: hexSize,
       origin_x: origin.x,
       origin_y: origin.y,
+      reveal_mode: revealMode,
       ...(imageSource === 'upload' ? { image: imageFile! } : { image_path: imagePath }),
+      ...(revealMode === 'two_layer' && detailFile ? { detail_image: detailFile } : {}),
     });
   };
 
@@ -217,6 +222,36 @@ export function CreateMap() {
             <input className={styles.input} type="number" min={10} max={200} value={hexSize}
               onChange={(e) => setHexSize(Number(e.target.value))} required />
           </label>
+
+          <div className={styles.label}>
+            Reveal Mode
+            <div className={styles.sourceToggle}>
+              <button type="button"
+                className={revealMode === 'grey_fog' ? styles.toggleActive : styles.toggleInactive}
+                onClick={() => { setRevealMode('grey_fog'); setDetailFile(null); }}>
+                Grey fog
+              </button>
+              <button type="button"
+                className={revealMode === 'two_layer' ? styles.toggleActive : styles.toggleInactive}
+                onClick={() => setRevealMode('two_layer')}>
+                Two-layer map
+              </button>
+            </div>
+          </div>
+
+          {revealMode === 'two_layer' && (
+            <label className={styles.label}>
+              Detail Map (revealed per explored hex)
+              <div className={styles.dropzone} onClick={() => detailFileRef.current?.click()}>
+                {detailFile
+                  ? <img src={URL.createObjectURL(detailFile)} className={styles.thumbPreview} alt="" />
+                  : <span className={styles.dropHint}>Click to upload detail map</span>}
+              </div>
+              <input ref={detailFileRef} type="file" accept="image/*" style={{ display: 'none' }}
+                onChange={(e) => setDetailFile(e.target.files?.[0] ?? null)} />
+              <span className={styles.hint}>Detail map must match the base map's dimensions.</span>
+            </label>
+          )}
 
           {previewUrl && imgNatural && (
             <div className={styles.editorWrap}>

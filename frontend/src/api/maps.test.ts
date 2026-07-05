@@ -25,9 +25,27 @@ describe('maps api wrappers', () => {
     expect(api.post).toHaveBeenLastCalledWith('/maps/4/highlight/', { hex_id: null });
   });
 
-  it('duplicateMap POSTs the new name to the duplicate path', () => {
+  it('duplicateMap posts multipart form data with just the name by default', () => {
     duplicateMap(2, 'Ashenvale (copy)');
-    expect(api.post).toHaveBeenCalledWith('/maps/2/duplicate/', { name: 'Ashenvale (copy)' });
+    const [path, form] = (api.postForm as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(path).toBe('/maps/2/duplicate/');
+    const fd = form as FormData;
+    expect(fd.get('name')).toBe('Ashenvale (copy)');
+    expect(fd.get('reveal_mode')).toBeNull();
+    expect(fd.get('image')).toBeNull();
+    expect(fd.get('detail_image')).toBeNull();
+  });
+
+  it('duplicateMap appends reveal_mode and images when converting to two-layer', () => {
+    const image = new File(['x'], 'base.png', { type: 'image/png' });
+    const detail = new File(['y'], 'detail.png', { type: 'image/png' });
+    duplicateMap(3, 'Two-layer copy', { reveal_mode: 'two_layer', image, detail_image: detail });
+    const [path, form] = (api.postForm as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(path).toBe('/maps/3/duplicate/');
+    const fd = form as FormData;
+    expect(fd.get('reveal_mode')).toBe('two_layer');
+    expect(fd.get('image')).toBe(image);
+    expect(fd.get('detail_image')).toBe(detail);
   });
 
   it('createMap builds multipart form data, stringifying numbers and omitting absent image', () => {

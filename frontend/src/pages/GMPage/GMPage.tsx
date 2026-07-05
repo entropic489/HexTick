@@ -93,7 +93,7 @@ export function GMPage() {
     ? factions.map((f) => {
         const snap = historicalState.faction_ticks.find((ft) => ft.faction_id === f.id);
         if (!snap) return f;
-        return { ...f, speed: snap.speed, population: snap.population, technology: snap.technology, technology_max: snap.technology_max, resources: snap.resources, agreeableness: snap.agreeableness, combat_skill: snap.combat_skill, current_hex: snap.current_hex, destination: snap.destination, current_action: snap.action as typeof f.current_action };
+        return { ...f, speed: snap.speed, population: snap.population, current_hex: snap.current_hex, destination: snap.destination, current_action: snap.action as typeof f.current_action };
       })
     : factions;
 
@@ -203,12 +203,6 @@ export function GMPage() {
           onClick={() => navigate(`/map/${id}/factions`)}
         >
           Factions
-        </button>
-        <button
-          className={styles.addFactionBtn}
-          onClick={() => navigate(`/map/${id}/knowledge`)}
-        >
-          Knowledge
         </button>
         <button
           className={styles.addFactionBtn}

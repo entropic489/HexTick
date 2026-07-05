@@ -12,7 +12,7 @@ import { ActionModal } from '../ActionModal/ActionModal';
 import styles from './HexPanel.module.css';
 
 const TERRAIN_TYPES: TerrainType[] = ['plains', 'forest', 'mountain', 'swamp', 'desert', 'coast', 'ocean', 'city'];
-const ACTION_TYPES: ActionType[] = ['supply', 'travel', 'trade', 'merge', 'battle', 'train', 'craft', 'delve', 'search', 'explore'];
+const ACTION_TYPES: ActionType[] = ['supply', 'travel', 'rest'];
 
 
 interface InteractModalProps {
@@ -47,7 +47,6 @@ interface FactionEditState {
   destRow: string;
   destCol: string;
   next_action: ActionType | null;
-  agreeableness: number;
   image: number | null;
   movement_restricted: boolean;
   allowed_hexes: number[];
@@ -172,7 +171,7 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
         ? null
         : (destHex?.id ?? null);
       const allowed_hexes = factionHexSelectMode ? [...factionAllowedHexIds] : params.allowed_hexes;
-      return patchFaction(id, { notes: params.notes, next_action: params.next_action, destination, agreeableness: params.agreeableness, image: params.image, movement_restricted: params.movement_restricted, allowed_hexes });
+      return patchFaction(id, { notes: params.notes, next_action: params.next_action, destination, image: params.image, movement_restricted: params.movement_restricted, allowed_hexes });
     },
     onSuccess: (_, { id }) => {
       if (mapId != null) queryClient.invalidateQueries({ queryKey: ['factions', mapId] });
@@ -450,8 +449,7 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
                               style={{ background: f.color }}
                             />
                             <span className={styles.poiName}>{f.name}</span>
-                            {f.is_famine && <span className={styles.warning}>[famine]</span>}
-                            {f.is_dying && <span className={styles.danger}>[dying]</span>}
+                            {f.is_dead && <span className={styles.danger}>[dead]</span>}
                             <span className={styles.poiChevron}>{expanded ? '▲' : '▼'}</span>
                           </button>
                           {expanded && !isEditing && gmMode && (
@@ -460,22 +458,7 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
                                 <span>Population</span><span>{f.population}</span>
                               </div>
                               <div className={styles.poiDetailRow}>
-                                <span>Resources</span><span>{f.resources}</span>
-                              </div>
-                              <div className={styles.poiDetailRow}>
-                                <span>Agreeableness</span><span>{f.agreeableness}</span>
-                              </div>
-                              <div className={styles.poiDetailRow}>
-                                <span>Combat skill</span><span>{f.combat_skill}</span>
-                              </div>
-                              <div className={styles.poiDetailRow}>
-                                <span>Theology</span><span>{f.theology}</span>
-                              </div>
-                              <div className={styles.poiDetailRow}>
-                                <span>Technology</span><span>{f.technology} / {f.technology_max}</span>
-                              </div>
-                              <div className={styles.poiDetailRow}>
-                                <span>Speed</span><span>{f.speed}</span>
+                                <span>Speed</span><span>{f.speed} / {f.max_speed}</span>
                               </div>
                               <div className={styles.poiDetailRow}>
                                 <span>Current action</span><span>{f.current_action ?? '—'}</span>
@@ -499,12 +482,25 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   const destHex = hexes.find((h) => h.id === f.destination);
-                                  setFactionDraft({ notes: f.notes, destRow: destHex ? String(destHex.row) : '', destCol: destHex ? String(destHex.col) : '', next_action: f.next_action, agreeableness: f.agreeableness, image: f.image, movement_restricted: f.movement_restricted, allowed_hexes: f.allowed_hexes });
+                                  setFactionDraft({ notes: f.notes, destRow: destHex ? String(destHex.row) : '', destCol: destHex ? String(destHex.col) : '', next_action: f.next_action, image: f.image, movement_restricted: f.movement_restricted, allowed_hexes: f.allowed_hexes });
                                   setEditingFactionId(f.id);
                                 }}
                               >
                                 Edit
                               </button>
+                              {party?.current_hex != null && f.destination !== party.current_hex && (
+                                <button
+                                  className={styles.editBtn}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    patchFaction(f.id, { destination: party.current_hex }).then(() => {
+                                      if (mapId != null) queryClient.invalidateQueries({ queryKey: ['factions', mapId] });
+                                    });
+                                  }}
+                                >
+                                  Path toward party
+                                </button>
+                              )}
                             </div>
                           )}
                           {expanded && isEditing && factionDraft && gmMode && (
@@ -545,15 +541,6 @@ export function HexPanel({ hex, hexes = [], factions, partyHexFactions = [], gmM
                                   <span className={styles.destError}>No hex at these coordinates</span>
                                 )}
                               </div>
-                              <label className={styles.factionEditLabel}>
-                                <span>Agreeableness</span>
-                                <input
-                                  className={styles.input}
-                                  type="number"
-                                  value={factionDraft.agreeableness}
-                                  onChange={(e) => setFactionDraft((d) => d && { ...d, agreeableness: Number(e.target.value) })}
-                                />
-                              </label>
                               <label className={styles.factionEditLabel}>
                                 <span>Image</span>
                                 <select

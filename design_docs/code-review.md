@@ -28,31 +28,31 @@ Structural items track the §1 "Structural analysis" list (S1–S6 map to its si
 - [x] **C1** — `resolve_leader` deleted; `leader: str = ''` serializes directly. Done.
 - [x] **C2** — `rolls = {}` initialized once near `extra = {}`; redundant reset in the move branch removed. Done.
 - [x] **C3** — Resolved by removing the feature rather than fixing the sync: `Party.faction` and `Faction.is_player_faction` deleted entirely (user decision, broader than fix options a/b). Backend (models, `api.py`, `actions.py`, `admin.py`) and frontend (`types/index.ts`, `api/maps.ts`, `FactionsPage`, `PlayerPage`, `AddFactionModal`) updated; `CLAUDE.md` and `design_docs/HexTick.md` doc drift fixed.
-- [ ] H1 — `next_action` dispatch
-- [ ] H2 — `_select_action` priority order **[DECISION NEEDED]**
-- [ ] H3 — scouting radius mismatch
-- [ ] H4 — `reset_to_tick` partial restore
+- [x] H1 — `next_action` dispatch. **Done 2026-07-05 (faction simplification):** `tick_faction` now consumes `next_action` (perform then clear) via the new `_select_action` ladder.
+- [x] H2 — `_select_action` priority order. **Resolved by removal 2026-07-05:** the entire priority chain (delve/craft/train/trade/battle) was deleted; factions now use a 4-rule ladder (next_action → destination → night-rest → day d3). No priority ambiguity remains.
+- [x] H3 — scouting radius mismatch. **Resolved by removal 2026-07-05:** `scouting` and all faction-vs-faction range logic deleted.
+- [ ] H4 — `reset_to_tick` partial restore. **Partially addressed 2026-07-05:** the omitted stat columns were removed from `FactionTick`, so snapshot/restore now match for the surviving fields (`speed`/`population`/`current_hex`/`destination`). Party live-state / `sub_tick` restore still outstanding.
 - [ ] H5 — `duplicate_map` shared image files
 - [ ] H6 — `party_action` 500 on no `current_hex`
 - [ ] H7 — first party action on a city map 500s (`PartyTick.tick` null) — found 2026-07-04 while writing pinning tests
-- [ ] M1 — disease re-contraction double-apply
-- [ ] M2 — no stat floors
+- [x] M1 — disease re-contraction double-apply. **Resolved by removal 2026-07-05:** the entire disease system (`DiseaseType`, `ActiveDisease`, apply/expire) was deleted.
+- [x] M2 — no stat floors. **Resolved by removal 2026-07-05:** `resources`/`technology`/`combat_skill`/`scouting` and the trade/battle math that drove them negative were deleted.
 - [ ] M3 — `update_party_tick_notes` query-param mismatch
 - [ ] M4 — SSE keepalive
 - [ ] M5 — `WorldSettings.get()` N+1 on tick
 - [ ] M6 — `useTickStream` build-breaking type
-- [ ] M7 — `create_faction` drops `notes`
+- [x] M7 — `create_faction` drops `notes`. **Done 2026-07-05:** `create_faction` now passes `notes=body.notes`.
 - [ ] M8 — factions with `current_hex=None` vanish **[DECISION NEEDED]**
 - [~] M9 — no automated tests — **substantially addressed 2026-07-04.** Backend suite 153 tests (was 47): full API pinning suite (`backend/world/tests/api/`, api.py 0%→95%) ahead of the router split, plus engine tests (`test_actions.py`, actions.py 58%→83%); `pytest-cov` in the `test` dependency-group. **Frontend suite expanded 44→116 tests** (steps 1–6 of the §"Frontend test plan"): added `src/test/renderWithProviders.tsx` helper, component tests for `EventLog`/`DiceModal`/`MonsterModal`/`NPCModal`/`LastActionResultModal`/`ActionModal` (gating matrix + submit body)/`AddFactionModal`/`AddPOIModal`/`BulkHexPanel` (tri-state), api wrappers `maps`/`tick`/`gallery`, and **`HexPanel` characterization tests written before its planned extraction**. Remaining backend gaps: SSE stream generator, random-driven `_run_shift` event emission, deep `duplicate_map` clone branches, `admin.py` (63%). Remaining frontend: `HexMap` render-smoke (step 7, deprioritized).
-- [ ] L1 — dead code inventory (8 items) **[DECISION NEEDED]** on item 7
-- [ ] L2 — faction default drift
-- [ ] L3 — frontend/backend enum drift
+- [~] L1 — dead code inventory (8 items). **Partially resolved 2026-07-05:** item 1 (`merge`/`Action.MERGE`) and item 2 (faction `search`) deleted with the faction simplification. Items 3–8 still outstanding.
+- [x] L2 — faction default drift. **Resolved 2026-07-05:** `FactionCreateSchema` defaults now match the model (speed/max_speed 4, population 10) and forward `notes`.
+- [x] L3 — frontend/backend enum drift. **Resolved 2026-07-05:** `ActionType` rewritten to the new set (`supply`/`travel`/`rest`/`search`/`explore`/`social`/`delve`).
 - [ ] L4 — `duplicate_map` N+1 on knowledge
 - [ ] L5 — `Hex.save()` side effect
 - [ ] L6 — concurrency: lock ordering
 - [ ] L7 — `client.ts` Content-Type on GET/DELETE
 - [ ] L8 — `post_tick` day-mode broadcast (no-op note, not a fix)
-- [ ] L9 — CLAUDE.md Characters drift (partially addressed as a side effect of C3 doc cleanup — Faction-types table and Party section updated; Characters-section removal still outstanding)
+- [x] L9 — CLAUDE.md Characters/Knowledge drift. **Done 2026-07-05:** the Characters and Knowledge sections were removed and the Faction-types / `_select_action` / model-layout sections rewritten to match the simplified factions.
 
 ---
 

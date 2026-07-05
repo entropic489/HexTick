@@ -36,11 +36,10 @@ function makeHex(o: Partial<Hex> = {}): Hex {
 
 function makeFaction(o: Partial<Faction> = {}): Faction {
   return {
-    id: 10, name: 'Redhand', color: '#f00', speed: 3, population: 20, technology: 5,
-    resources: 10, combat_skill: 5, current_action: null, last_action: null, current_hex: 1,
-    destination: null, is_mobile: true, is_gm_faction: false, is_famine: false, is_dying: false,
-    max_speed: 4, agreeableness: 0, theology: 0, technology_max: 30, next_action: null,
-    notes: '', knowledge: [], leader: '', image: null, movement_restricted: false,
+    id: 10, name: 'Redhand', color: '#f00', speed: 3, max_speed: 4, population: 20,
+    current_action: null, last_action: null, current_hex: 1,
+    destination: null, is_mobile: true, is_dead: false, next_action: null,
+    notes: '', leader: '', image: null, movement_restricted: false,
     allowed_hexes: [], ...o,
   };
 }

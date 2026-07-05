@@ -48,8 +48,8 @@ describe('AddFactionModal', () => {
     expect(body).toMatchObject({
       name: 'Redhand',
       current_hex: 2, // seeded from defaultHexId
-      speed: 3, population: 10, technology: 5, resources: 10, combat_skill: 5,
-      is_mobile: true, is_gm_faction: false,
+      speed: 4, max_speed: 4, population: 10,
+      is_mobile: true,
     });
   });
 

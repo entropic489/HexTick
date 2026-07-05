@@ -14,11 +14,6 @@ export interface FactionTickState {
   is_mobile: boolean;
   speed: number;
   population: number;
-  technology: number;
-  technology_max: number;
-  resources: number;
-  agreeableness: number;
-  combat_skill: number;
   current_hex: number | null;
   destination: number | null;
   action: string | null;

@@ -13,15 +13,18 @@ interface Props {
   factionAllowed?: boolean;
   randomHighlight?: boolean;
   fogOfWar: boolean;
+  revealMode?: 'grey_fog' | 'two_layer';
   onClick: (hexId: number) => void;
 }
 
-export function HexCell({ hex, factions, size, originX, originY, selected, multiSelected, factionAllowed, randomHighlight, fogOfWar, onClick }: Props) {
+export function HexCell({ hex, factions, size, originX, originY, selected, multiSelected, factionAllowed, randomHighlight, fogOfWar, revealMode = 'grey_fog', onClick }: Props) {
   const [cx, cy] = hexToPixel(hex.row, hex.col, size, originX, originY);
   const points = flatTopPoints(cx, cy, size - 1);
   const hidden = fogOfWar && !hex.player_visible;
   const unexplored = fogOfWar && !hex.player_explored;
-  const fogged = fogOfWar && !hex.player_visible && !hex.player_explored;
+  // Grey fog overlay is only for grey-fog maps. In two-layer mode the vague NPC map
+  // (base image) shows through unexplored hexes instead of a solid grey cover.
+  const fogged = revealMode === 'grey_fog' && fogOfWar && !hex.player_visible && !hex.player_explored;
 
   const fill = multiSelected
     ? 'rgba(250,204,21,0.45)'

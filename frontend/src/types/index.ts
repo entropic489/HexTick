@@ -1,8 +1,8 @@
 export type TerrainType = 'plains' | 'forest' | 'mountain' | 'swamp' | 'desert' | 'coast' | 'ocean' | 'city';
 export type WeatherType = 'fair' | 'overcast' | 'inclement' | 'extreme' | 'catastrophic';
 export type ActionType =
-  | 'supply' | 'travel' | 'trade' | 'merge' | 'battle'
-  | 'train' | 'craft' | 'delve' | 'search' | 'explore';
+  | 'supply' | 'travel' | 'rest'
+  | 'search' | 'explore' | 'social' | 'delve';
 export type POIType = 'dungeon' | 'village' | 'ruin' | 'stash' | 'monster_base' | 'general';
 
 export interface Map {
@@ -17,6 +17,8 @@ export interface Map {
   sub_tick: number;
   weather: WeatherType;
   player_actions_locked: boolean;
+  reveal_mode: 'grey_fog' | 'two_layer';
+  detail_image?: string | null;
 }
 
 export interface PointOfInterest {
@@ -56,43 +58,20 @@ export interface Faction {
   name: string;
   color: string;
   speed: number;
+  max_speed: number;
   population: number;
-  technology: number;
-  resources: number;
-  combat_skill: number;
   current_action: ActionType | null;
   last_action: ActionType | null;
   current_hex: number | null;
   destination: number | null;
   is_mobile: boolean;
-  is_gm_faction: boolean;
-  is_famine: boolean;
-  is_dying: boolean;
-  max_speed: number;
-  agreeableness: number;
-  theology: number;
-  technology_max: number;
+  is_dead: boolean;
   next_action: ActionType | null;
   notes: string;
-  knowledge: number[];
   leader: string;
   image: number | null;
   movement_restricted: boolean;
   allowed_hexes: number[];
-}
-
-export interface KnowledgeRef {
-  id: number;
-  title: string;
-}
-
-export interface Knowledge {
-  id: number;
-  title: string;
-  description: string;
-  do_players_know: boolean;
-  age: number;
-  related_knowledge: KnowledgeRef[];
 }
 
 export interface Party {

@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { Map, Hex, Faction, Party, Knowledge, TerrainType, WeatherType, ActionType } from '../types';
+import type { Map, Hex, Faction, Party, TerrainType, WeatherType, ActionType } from '../types';
 
 export const patchMapWeather = (mapId: number, weather: WeatherType) =>
   api.patch<Map>(`/maps/${mapId}/weather/`, { weather });
@@ -48,14 +48,12 @@ export interface CreateFactionParams {
   name: string;
   color: string;
   speed: number;
+  max_speed: number;
   population: number;
-  technology: number;
-  resources: number;
-  combat_skill: number;
   current_hex?: number | null;
   destination?: number | null;
   is_mobile: boolean;
-  is_gm_faction: boolean;
+  notes?: string;
 }
 
 export const createFaction = (mapId: number, params: CreateFactionParams) =>
@@ -65,19 +63,14 @@ export interface PatchFactionParams {
   name?: string;
   color?: string;
   speed?: number;
+  max_speed?: number;
   population?: number;
-  technology?: number;
-  resources?: number;
-  combat_skill?: number;
   current_hex?: number | null;
   destination?: number | null;
   is_mobile?: boolean;
-  is_gm_faction?: boolean;
-  agreeableness?: number;
-  theology?: number;
+  is_dead?: boolean;
   next_action?: ActionType | null;
   notes?: string;
-  knowledge?: number[];
   leader?: string;
   image?: number | null;
   movement_restricted?: boolean;
@@ -98,32 +91,22 @@ export const getMap = (id: number) => api.get<Map>(`/maps/${id}/`);
 export const getHexes = (mapId: number) => api.get<Hex[]>(`/maps/${mapId}/hexes/`);
 export const getFactions = (mapId: number) => api.get<Faction[]>(`/maps/${mapId}/factions/`);
 
-export interface PatchKnowledgeParams {
-  title?: string;
-  description?: string;
-  do_players_know?: boolean;
-  age?: number;
-  related_knowledge?: number[];
-}
-
-export interface CreateKnowledgeParams {
-  title: string;
-  description?: string;
-  do_players_know?: boolean;
-  age?: number;
-  related_knowledge?: number[];
-}
-
-export const getKnowledge = (mapId: number) => api.get<Knowledge[]>(`/maps/${mapId}/knowledge/`);
-export const createKnowledge = (mapId: number, params: CreateKnowledgeParams) =>
-  api.post<Knowledge>(`/maps/${mapId}/knowledge/`, params);
-export const patchKnowledge = (id: number, params: PatchKnowledgeParams) =>
-  api.patch<Knowledge>(`/knowledge/${id}/`, params);
-
 export const getParty = (mapId: number) => api.get<Party>(`/maps/${mapId}/party/`);
 
-export const duplicateMap = (mapId: number, name: string) =>
-  api.post<Map>(`/maps/${mapId}/duplicate/`, { name });
+export interface DuplicateMapParams {
+  reveal_mode?: string;
+  image?: File;
+  detail_image?: File;
+}
+
+export function duplicateMap(mapId: number, name: string, params: DuplicateMapParams = {}): Promise<Map> {
+  const form = new FormData();
+  form.append('name', name);
+  if (params.reveal_mode) form.append('reveal_mode', params.reveal_mode);
+  if (params.image) form.append('image', params.image);
+  if (params.detail_image) form.append('detail_image', params.detail_image);
+  return api.postForm<Map>(`/maps/${mapId}/duplicate/`, form);
+}
 
 export interface CreateMapParams {
   name: string;
@@ -132,6 +115,9 @@ export interface CreateMapParams {
   origin_y: number;
   image?: File;
   image_path?: string;
+  reveal_mode?: string;
+  detail_image?: File;
+  detail_image_path?: string;
 }
 
 export function createMap(params: CreateMapParams): Promise<Map> {
@@ -142,5 +128,8 @@ export function createMap(params: CreateMapParams): Promise<Map> {
   form.append('origin_y', String(params.origin_y));
   if (params.image) form.append('image', params.image);
   if (params.image_path) form.append('image_path', params.image_path);
+  if (params.reveal_mode) form.append('reveal_mode', params.reveal_mode);
+  if (params.detail_image) form.append('detail_image', params.detail_image);
+  if (params.detail_image_path) form.append('detail_image_path', params.detail_image_path);
   return api.postForm<Map>('/maps/', form);
 }
