@@ -66,6 +66,24 @@ class TestRunShift:
         tick = Tick.objects.get(map=m, number=tick_number)
         assert not tick.faction_ticks.filter(faction=dead).exists()
 
+    def test_worldsettings_queried_once_regardless_of_hex_count(self, map_factory, hex_factory):
+        # M5: the resource-tick modifier is fetched once per shift, not once per hex.
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        from world.models.settings import WorldSettings
+
+        m = map_factory()
+        for col in range(5):
+            hex_factory(map=m, row=0, col=col)
+        WorldSettings.get()          # ensure the singleton exists (no get_or_create insert during capture)
+        run_shift(m.id); run_shift(m.id)   # advance to tick 2 so the next shift is a morning tick
+
+        with CaptureQueriesContext(connection) as ctx:
+            run_shift(m.id)          # tick 3 -> morning -> resource path runs for every hex
+
+        settings_queries = [q for q in ctx.captured_queries if 'worldsettings' in q['sql'].lower()]
+        assert len(settings_queries) == 1
+
 
 # --- perform_party_action ----------------------------------------------------
 
@@ -145,19 +163,21 @@ class TestPerformPartyAction:
         p.refresh_from_db()
         assert p.is_lost is False
 
-    def test_city_map_first_action_is_sub_tick_not_shift(self, map_factory, hex_factory, party_factory):
-        # On a city map the first action is a mid-shift sub-tick (sub_tick 0->1),
-        # so run_shift does NOT fire. Note this pins the H7 crash characterization at
-        # the engine level: with no current_tick, the PartyTick snapshot hits the
-        # non-null tick FK and raises. Rewrite when H7 is fixed.
-        from django.db import IntegrityError
-
+    def test_city_map_first_action_seeds_tick(self, map_factory, hex_factory, party_factory):
+        # H7 fix: on a city map the first action is a mid-shift sub-tick with no
+        # current_tick. The shift's Tick is seeded so the PartyTick (non-null tick FK)
+        # can be recorded — the action succeeds and sub_tick advances 0->1.
         m = map_factory(map_type=MapType.CITY)
         a = hex_factory(map=m, row=0, col=0)
         p = party_factory(map=m, current_hex=a, speed=3, max_speed=5)
 
-        with pytest.raises(IntegrityError):
-            perform_party_action(p, 'supply')
+        outcome = perform_party_action(p, 'supply')
+
+        m.refresh_from_db()
+        assert outcome.tick_number == 1
+        assert m.sub_tick == 1
+        assert Tick.objects.filter(map=m).count() == 1
+        assert outcome.party_tick.sub_tick == 1
 
     def test_city_map_sub_tick_after_seeded_tick(self, map_factory, hex_factory, party_factory):
         # With a tick already present, a city-map action is a sub-tick: no new Tick,

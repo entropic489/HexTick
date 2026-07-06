@@ -1,7 +1,9 @@
+import os
 from typing import Optional
 
 from ninja import Router, Schema, File, Form
 from ninja.files import UploadedFile
+from django.core.files.base import ContentFile
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 
@@ -11,6 +13,25 @@ from world.models.party import Party
 from .common import api, publish
 
 router = Router()
+
+
+def _clone_file_field(source_field, target_field):
+    """Give `target_field` its own copy of `source_field`'s file so a clone doesn't share the
+    source's file on disk (H5): deleting one clone's image would otherwise destroy the other's.
+    If the underlying file is missing from storage (e.g. a name-only reference), fall back to
+    sharing the reference so duplication still succeeds."""
+    if not source_field:
+        return
+    name = source_field.name
+    if source_field.storage.exists(name):
+        source_field.open('rb')
+        try:
+            data = source_field.read()
+        finally:
+            source_field.close()
+        target_field.save(os.path.basename(name), ContentFile(data), save=False)
+    else:
+        target_field.name = name
 
 
 class MapSchema(Schema):
@@ -150,18 +171,26 @@ def duplicate_map(
         # --- New Map ---
         new_map = Map(
             name=name,
-            image=image or source.image,
             hex_size=source.hex_size,
             origin_x=source.origin_x,
             origin_y=source.origin_y,
             fog_of_war=source.fog_of_war,
             map_type=source.map_type,
             reveal_mode=reveal_mode or source.reveal_mode,
-            detail_image=detail_image or source.detail_image or None,
             sub_tick=0,
             player_actions_locked=False,
             current_tick=None,
         )
+        # Give the clone its own copy of each image file. An uploaded override is already a
+        # fresh file; otherwise copy the source's file rather than share the same path (H5).
+        if image:
+            new_map.image = image
+        else:
+            _clone_file_field(source.image, new_map.image)
+        if detail_image:
+            new_map.detail_image = detail_image
+        else:
+            _clone_file_field(source.detail_image, new_map.detail_image)
         new_map.save()
 
         # --- Gallery Images ---
@@ -170,9 +199,9 @@ def duplicate_map(
             new_gi = GalleryImage(
                 map=new_map,
                 name=gi.name,
-                image=gi.image,
                 is_published=False,
             )
+            _clone_file_field(gi.image, new_gi.image)
             new_gi.save()
             gallery_map[gi.id] = new_gi.id
 
@@ -223,11 +252,12 @@ def duplicate_map(
         # --- Factions ---
         faction_map: dict[int, int] = {}  # old_id -> new_id
         old_factions = list(
-            Faction.objects.filter(current_hex__map=source)
+            Faction.objects.filter(map=source)
             .prefetch_related('allowed_hexes')
         )
         for f in old_factions:
             new_f = Faction(
+                map=new_map,
                 name=f.name,
                 leader=f.leader,
                 color=f.color,
@@ -272,7 +302,6 @@ def duplicate_map(
                 resource_generation=p.resource_generation,
                 supplies=p.supplies,
                 current_hex_id=hex_map.get(p.current_hex_id) if p.current_hex_id else None,
-                destination_id=hex_map.get(p.destination_id) if p.destination_id else None,
                 tracks_supplies=p.tracks_supplies,
                 current_action=p.current_action,
                 last_action=p.last_action,

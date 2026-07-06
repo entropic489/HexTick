@@ -29,5 +29,8 @@ def faction_factory(hex_factory):
         if current_hex is None:
             current_hex = hex_factory()
         kwargs.setdefault('name', 'Test Faction')
+        # Mirror the API: a faction's map membership is now an explicit FK (M8),
+        # defaulting to its current hex's map when not overridden.
+        kwargs.setdefault('map', current_hex.map if current_hex else None)
         return Faction.objects.create(current_hex=current_hex, **kwargs)
     return _make

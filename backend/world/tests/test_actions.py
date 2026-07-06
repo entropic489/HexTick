@@ -137,6 +137,43 @@ def test_wander_respects_allowed_hexes(map_factory, hex_factory, faction_factory
     assert _select_action(f, adjacent_hexes(a, [a, b]), set(), tick_number=1).action == Action.REST
 
 
+# --- is_mobile (H1) ----------------------------------------------------------
+
+def test_immobile_faction_ignores_destination(map_factory, hex_factory, faction_factory):
+    m = map_factory()
+    a = hex_factory(map=m, row=0, col=0)
+    b = hex_factory(map=m, row=1, col=0)
+    f = faction_factory(current_hex=a, speed=5, max_speed=5, destination=b, is_mobile=False)
+    result = _select_action(f, adjacent_hexes(a, [a, b]), None, tick_number=1)
+    assert result.action == Action.REST
+    f.refresh_from_db()
+    assert f.current_hex_id == a.id
+    assert f.destination_id == b.id  # not cleared — never reached
+
+
+def test_immobile_faction_never_wanders(map_factory, hex_factory, faction_factory, force_d3):
+    m = map_factory()
+    a = hex_factory(map=m, row=0, col=0)
+    b = hex_factory(map=m, row=1, col=0)
+    f = faction_factory(current_hex=a, speed=5, max_speed=5, is_mobile=False)
+    force_d3(1)  # day movement roll, but immobile -> rest instead
+    result = _select_action(f, adjacent_hexes(a, [a, b]), None, tick_number=1)
+    assert result.action == Action.REST
+    f.refresh_from_db()
+    assert f.current_hex_id == a.id
+
+
+def test_immobile_faction_ignores_travel_next_action(map_factory, hex_factory, faction_factory):
+    m = map_factory()
+    a = hex_factory(map=m, row=0, col=0)
+    b = hex_factory(map=m, row=1, col=0)
+    f = faction_factory(current_hex=a, speed=5, max_speed=5, is_mobile=False, next_action=Action.TRAVEL)
+    result = _select_action(f, adjacent_hexes(a, [a, b]), None, tick_number=1)
+    assert result.action == Action.REST
+    f.refresh_from_db()
+    assert f.current_hex_id == a.id
+
+
 # --- FactionTick snapshot ----------------------------------------------------
 
 def test_tick_faction_snapshots_reduced_fields(map_factory, hex_factory, faction_factory):

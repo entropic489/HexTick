@@ -34,7 +34,7 @@ function makeParty(overrides: Partial<Party> = {}): Party {
   return {
     id: 9, name: 'Heroes', map: 1, player_count: 2, speed: 5, max_speed: 6,
     resource_generation: 0, supplies: 10, tracks_supplies: true, is_lost: false,
-    current_hex: 1, destination: null, current_action: null, last_action: null, ...overrides,
+    current_hex: 1, current_action: null, last_action: null, ...overrides,
   };
 }
 

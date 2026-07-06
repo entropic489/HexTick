@@ -214,12 +214,10 @@ class FactionTickAdmin(admin.ModelAdmin):
 class PartyAdminForm(forms.ModelForm):
     current_hex_row = forms.IntegerField(required=False, label='Current hex row')
     current_hex_col = forms.IntegerField(required=False, label='Current hex col')
-    destination_row = forms.IntegerField(required=False, label='Destination row')
-    destination_col = forms.IntegerField(required=False, label='Destination col')
 
     class Meta:
         model = Party
-        exclude = ('current_hex', 'destination')
+        exclude = ('current_hex',)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -227,9 +225,6 @@ class PartyAdminForm(forms.ModelForm):
             if self.instance.current_hex:
                 self.fields['current_hex_row'].initial = self.instance.current_hex.row
                 self.fields['current_hex_col'].initial = self.instance.current_hex.col
-            if self.instance.destination:
-                self.fields['destination_row'].initial = self.instance.destination.row
-                self.fields['destination_col'].initial = self.instance.destination.col
 
     def _lookup_hex(self, map_obj, row, col, field_label):
         try:
@@ -242,18 +237,11 @@ class PartyAdminForm(forms.ModelForm):
         map_obj = cleaned.get('map')
         row = cleaned.get('current_hex_row')
         col = cleaned.get('current_hex_col')
-        dest_row = cleaned.get('destination_row')
-        dest_col = cleaned.get('destination_col')
 
         if map_obj and row is not None and col is not None:
             cleaned['_current_hex'] = self._lookup_hex(map_obj, row, col, 'Current hex')
         else:
             cleaned['_current_hex'] = None
-
-        if map_obj and dest_row is not None and dest_col is not None:
-            cleaned['_destination'] = self._lookup_hex(map_obj, dest_row, dest_col, 'Destination')
-        else:
-            cleaned['_destination'] = None
 
         return cleaned
 
@@ -270,7 +258,7 @@ class PartyAdmin(admin.ModelAdmin):
             'fields': ('speed', 'max_speed', 'resource_generation'),
         }),
         ('Location', {
-            'fields': ('current_hex_row', 'current_hex_col', 'destination_row', 'destination_col'),
+            'fields': ('current_hex_row', 'current_hex_col'),
         }),
         ('Action', {
             'fields': ('current_action', 'last_action'),
@@ -279,6 +267,5 @@ class PartyAdmin(admin.ModelAdmin):
 
     def save_model(self, request, obj, form, change):
         obj.current_hex = form.cleaned_data['_current_hex']
-        obj.destination = form.cleaned_data['_destination']
         super().save_model(request, obj, form, change)
 

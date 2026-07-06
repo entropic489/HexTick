@@ -44,7 +44,17 @@ def upload_gallery_image(
 @router.delete("/gallery/{image_id}/")
 def delete_gallery_image(request, image_id: int):
     img = get_object_or_404(GalleryImage, id=image_id)
-    img.image.delete(save=False)
+    name = img.image.name if img.image else None
+    # Only remove the file from disk if no other row still points at it. Duplicates created
+    # before the duplicate_map copy fix (H5) can share a path — deleting the file would break
+    # the other row's image.
+    shared = bool(name) and (
+        GalleryImage.objects.filter(image=name).exclude(id=img.id).exists()
+        or Map.objects.filter(image=name).exists()
+        or Map.objects.filter(detail_image=name).exists()
+    )
+    if name and not shared:
+        img.image.delete(save=False)
     img.delete()
     return {'ok': True}
 

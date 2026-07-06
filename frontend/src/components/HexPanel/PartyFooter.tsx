@@ -136,7 +136,6 @@ export function PartyFooter({ party }: Props) {
             <dt>Players</dt><dd>{party.player_count}</dd>
             {party.tracks_supplies && <><dt>Supplies</dt><dd>{party.supplies}</dd></>}
             <dt>Hex</dt><dd>{party.current_hex ?? '—'}</dd>
-            <dt>Destination</dt><dd>{party.destination ?? '—'}</dd>
             <dt>Speed</dt><dd>{party.speed} / {party.max_speed}</dd>
             <dt>Action</dt><dd>{party.current_action ?? '—'}</dd>
           </dl>

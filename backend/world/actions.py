@@ -134,6 +134,8 @@ def _perform_travel(
 ) -> ActionResult:
     """Step toward the GM-set destination (ignoring restrictions) if one is set;
     otherwise wander to a random allowed adjacent hex."""
+    if not faction.is_mobile:
+        return rest(faction)
     if faction.destination and faction.current_hex != faction.destination:
         step = _step_toward(faction.destination, candidate_hexes)
     elif restricted:
@@ -175,6 +177,8 @@ def _select_action(
         if faction.current_hex == faction.destination:
             faction.destination = None
             faction.save(update_fields=['destination'])
+        elif not faction.is_mobile:
+            return rest(faction)
         else:
             step = _step_toward(faction.destination, candidate_hexes)
             if step:
@@ -189,7 +193,7 @@ def _select_action(
     roll = random.randint(1, 3)
     if roll == 3:
         return supply(faction)
-    if restricted:
+    if faction.is_mobile and restricted:
         return travel(faction, random.choice(restricted), tick_number, weather)
     return rest(faction)
 
@@ -241,9 +245,9 @@ def tick_party(party: Party, tick: Tick) -> None:
 
 # --- Hex ---
 
-def tick_hex(hex: Hex, tick: Tick) -> HexTick:
+def tick_hex(hex: Hex, tick: Tick, resource_tick_modifier: int) -> HexTick:
     if tick.number % 3 == 0:
-        hex.resources += hex.resource_generation * WorldSettings.get().hex_resource_tick_modifier
+        hex.resources += hex.resource_generation * resource_tick_modifier
         hex.save(update_fields=['resources'])
     return HexTick.objects.create(
         tick=tick,
@@ -267,10 +271,11 @@ def run_shift(map_id: int) -> tuple[int, list[dict]]:
     map_obj.save(update_fields=['current_tick'])
 
     hexes = list(Hex.objects.filter(map_id=map_id).prefetch_related('pois'))
-    factions = list(Faction.objects.filter(current_hex__map_id=map_id, is_dead=False).prefetch_related('allowed_hexes'))
+    factions = list(Faction.objects.filter(map_id=map_id, is_dead=False).prefetch_related('allowed_hexes'))
 
+    resource_tick_modifier = WorldSettings.get().hex_resource_tick_modifier
     for hex in hexes:
-        tick_hex(hex, tick)
+        tick_hex(hex, tick, resource_tick_modifier)
 
     for faction in factions:
         candidates = adjacent_hexes(faction.current_hex, hexes) if faction.current_hex else []
@@ -340,7 +345,6 @@ def _create_party_tick(party: Party, tick, action, sub_tick: int = 0) -> PartyTi
         party=party,
         defaults=dict(
             current_hex=party.current_hex,
-            destination=party.destination,
             action=action,
             last_action=party.last_action,
             sub_tick=sub_tick,
@@ -362,7 +366,15 @@ def perform_party_action(
     on the outcome for the API layer to publish on commit."""
     from django.shortcuts import get_object_or_404
 
-    map_id = party.current_hex.map_id if party.current_hex else None
+    # Prefer the hex's map, but fall back to the party's own map FK so non-move actions
+    # work for a party with no current_hex (H6). If neither resolves a map, reject.
+    map_id = party.current_hex.map_id if party.current_hex else party.map_id
+    if map_id is None:
+        raise PartyActionError('Party is not on a map.')
+    # Lock the map row up front (L6) so the sub_tick math and the shift can't interleave
+    # with a concurrent party action, and reuse this instance instead of re-fetching the
+    # map several times below. run_shift re-acquires the same lock re-entrantly.
+    map_obj = Map.objects.select_for_update().get(id=map_id)
     extra: dict = {}
     rolls: dict = {}
     sse_messages: list[dict] = []
@@ -374,7 +386,7 @@ def perform_party_action(
         if not party.current_hex or destination.map_id != party.current_hex.map_id:
             raise PartyActionError('Destination hex is not on the same map.')
 
-        move_map = Map.objects.get(id=map_id) if map_id else None
+        move_map = map_obj
         map_current = move_map.current_tick if move_map else None
         current_tick_number = map_current.number if map_current else 0
         move_cost = move_difficulty(party.current_hex, destination, current_tick_number, move_map.weather if move_map else 'fair')
@@ -428,7 +440,7 @@ def perform_party_action(
         party.last_action = party.current_action
         party.current_action = Action.SUPPLY
         party.save()
-        supply_map = Map.objects.get(id=map_id) if map_id else None
+        supply_map = map_obj
         if supply_map and supply_map.map_type != MapType.CITY:
             rolls = party_wilderness_roll('supply', supply_map)
 
@@ -454,7 +466,7 @@ def perform_party_action(
         party.last_action = party.current_action
         party.current_action = Action.REST
         party.save()
-        rest_map = Map.objects.get(id=map_id) if map_id else None
+        rest_map = map_obj
         if rest_map and rest_map.map_type != MapType.CITY:
             rolls = party_wilderness_roll('rest', rest_map)
 
@@ -463,8 +475,7 @@ def perform_party_action(
             raise PartyActionError('Party is not lost.')
         if not party.current_hex:
             raise PartyActionError('Party has no current hex.')
-        map_obj_cl = Map.objects.get(id=map_id) if map_id else None
-        tick_num_cl = map_obj_cl.current_tick.number if map_obj_cl and map_obj_cl.current_tick else 0
+        tick_num_cl = map_obj.current_tick.number if map_obj and map_obj.current_tick else 0
         cost = party.current_hex.terrain_difficulty + night_bonus(tick_num_cl)
         party.speed = max(0, party.speed - cost)
         party.is_lost = False
@@ -477,7 +488,6 @@ def perform_party_action(
     else:
         raise PartyActionError(f'Unknown action: {action}')
 
-    map_obj = Map.objects.get(id=map_id) if map_id else None
     is_city = map_obj and map_obj.map_type == MapType.CITY
 
     if is_city:
@@ -496,6 +506,12 @@ def perform_party_action(
         map_obj.refresh_from_db(fields=['current_tick'])
         tick = map_obj.current_tick
     else:
+        # City map mid-shift sub-tick. If no shift has ever fired, there is no Tick for
+        # this sub-tick's PartyTick to reference (PartyTick.tick is non-null) — seed the
+        # current shift's Tick before recording it (H7).
+        if map_obj and map_obj.current_tick is None:
+            run_shift(map_id)
+            map_obj.refresh_from_db(fields=['current_tick'])
         tick_number = map_obj.current_tick.number if map_obj and map_obj.current_tick else 0
         events = []
 

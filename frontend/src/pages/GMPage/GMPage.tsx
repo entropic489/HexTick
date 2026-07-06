@@ -105,7 +105,7 @@ export function GMPage() {
   });
 
   const displayedParty = viewingTickNumber !== null && historicalState?.party_tick && party
-    ? { ...party, current_hex: historicalState.party_tick.current_hex, destination: historicalState.party_tick.destination, current_action: historicalState.party_tick.action, last_action: historicalState.party_tick.last_action }
+    ? { ...party, current_hex: historicalState.party_tick.current_hex, current_action: historicalState.party_tick.action, last_action: historicalState.party_tick.last_action }
     : party;
 
   const selectedHex = displayedHexes.find((h) => h.id === selectedHexId) ?? null;

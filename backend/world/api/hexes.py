@@ -88,11 +88,12 @@ def bulk_patch_hexes(request, body: BulkHexPatchBody):
 @router.patch("/hexes/{hex_id}/", response=HexSchema)
 @transaction.atomic
 def patch_hex(request, hex_id: int, body: HexPatchSchema):
-    hex_obj = get_object_or_404(Hex, id=hex_id)
+    # select_related('map') so Hex.save()'s can_enter invariant (which reads self.map)
+    # doesn't issue an extra query on this hot path.
+    hex_obj = get_object_or_404(Hex.objects.select_related('map'), id=hex_id)
     for field, value in body.dict(exclude_unset=True).items():
         setattr(hex_obj, field, value)
     hex_obj.save()
-    hex_obj.pois.all()  # prefetch for resolver
     return hex_obj
 
 

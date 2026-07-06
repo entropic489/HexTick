@@ -36,11 +36,15 @@ def tick_stream(request, map_id: int):
         pubsub.subscribe(_sse_channel(map_id))
         try:
             yield "retry: 3000\n\n"
-            for message in pubsub.listen():
-                if message["type"] == "message":
-                    yield f"data: {message['data']}\n\n"
-                else:
+            # Poll with a timeout instead of blocking forever in listen(): when no
+            # message arrives within the window, emit a keepalive comment so idle
+            # connections aren't dropped by proxies/browsers.
+            while True:
+                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=15.0)
+                if message is None:
                     yield ": keepalive\n\n"
+                elif message["type"] == "message":
+                    yield f"data: {message['data']}\n\n"
         finally:
             pubsub.unsubscribe()
             pubsub.close()

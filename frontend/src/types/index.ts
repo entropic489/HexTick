@@ -60,6 +60,7 @@ export interface Faction {
   speed: number;
   max_speed: number;
   population: number;
+  map: number | null;
   current_action: ActionType | null;
   last_action: ActionType | null;
   current_hex: number | null;
@@ -86,7 +87,6 @@ export interface Party {
   tracks_supplies: boolean;
   is_lost: boolean;
   current_hex: number | null;
-  destination: number | null;
   current_action: string | null;
   last_action: string | null;
 }

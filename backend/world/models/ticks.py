@@ -1,6 +1,6 @@
 from django.db import models
 
-from .hex import Hex, PointOfInterest
+from .hex import Hex
 from .faction import Faction, Action
 
 
@@ -21,7 +21,6 @@ class HexTick(models.Model):
     hex = models.ForeignKey(Hex, on_delete=models.CASCADE, related_name='ticks')
 
     resources = models.IntegerField()
-    points_of_interest = models.ManyToManyField(PointOfInterest, blank=True)
     encounter_likelihood = models.IntegerField()
     player_explored = models.BooleanField()
     player_visible = models.BooleanField()
@@ -62,9 +61,6 @@ class PartyTick(models.Model):
     party = models.ForeignKey('world.Party', on_delete=models.CASCADE, related_name='ticks')
 
     current_hex = models.ForeignKey(
-        Hex, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
-    )
-    destination = models.ForeignKey(
         Hex, null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
     )
     action = models.CharField(max_length=20, choices=Action.choices, null=True, blank=True)

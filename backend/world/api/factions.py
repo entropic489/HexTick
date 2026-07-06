@@ -16,10 +16,15 @@ class FactionSchema(Schema):
     speed: int
     max_speed: int
     population: int
+    map: Optional[int]
     current_action: Optional[str]
     last_action: Optional[str]
     current_hex: Optional[int]
     destination: Optional[int]
+
+    @staticmethod
+    def resolve_map(obj):
+        return obj.map_id
     is_mobile: bool
     is_dead: bool
     next_action: Optional[str] = None
@@ -61,7 +66,7 @@ class FactionCreateSchema(Schema):
 @router.get("/maps/{map_id}/factions/", response=list[FactionSchema])
 def list_factions(request, map_id: int):
     get_object_or_404(Map, id=map_id)
-    return list(Faction.objects.filter(current_hex__map_id=map_id).prefetch_related('allowed_hexes'))
+    return list(Faction.objects.filter(map_id=map_id).prefetch_related('allowed_hexes'))
 
 
 class FactionPatchSchema(Schema):
@@ -113,6 +118,7 @@ def create_faction(request, map_id: int, body: FactionCreateSchema):
     current_hex = get_object_or_404(Hex, id=body.current_hex, map=map_obj) if body.current_hex else None
     destination = get_object_or_404(Hex, id=body.destination, map=map_obj) if body.destination else None
     faction = Faction.objects.create(
+        map=map_obj,
         name=body.name,
         color=body.color,
         speed=body.speed,

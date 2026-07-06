@@ -123,6 +123,37 @@ class TestResetToTick:
         f.refresh_from_db()
         assert f.population == ft1.population == 50
 
+    def test_reset_restores_party_live_state(self, client, map_factory,
+                                             hex_factory, party_factory):
+        # H4: reset restores party live-state from the most recent PartyTick at or
+        # before the target tick.
+        m = map_factory()
+        a = hex_factory(map=m, row=0, col=0)
+        b = hex_factory(map=m, row=0, col=1)
+        p = party_factory(map=m, current_hex=a, speed=9, max_speed=9)
+        # Action on tick 1 snapshots the party on hex a; then move to b (tick 2).
+        client.post(f'/api/party/{p.id}/action/', {'action': 'search'})
+        client.post(f'/api/party/{p.id}/action/', {'action': 'move', 'hex_id': b.id})
+        p.refresh_from_db()
+        assert p.current_hex_id == b.id
+
+        resp = client.post(f'/api/maps/{m.id}/tick/1/reset/', {})
+        assert resp.status_code == 200
+        p.refresh_from_db()
+        assert p.current_hex_id == a.id
+
+    def test_reset_zeroes_sub_tick(self, client, map_factory, hex_factory, party_factory):
+        # H4: reset lands on a shift boundary, so Map.sub_tick is cleared.
+        m = map_factory(map_type='city')
+        a = hex_factory(map=m, row=0, col=0)
+        p = party_factory(map=m, current_hex=a, speed=9, max_speed=9)
+        client.post(f'/api/party/{p.id}/action/', {'action': 'search'})  # seeds tick 1, sub_tick 1
+        m.refresh_from_db()
+        assert m.sub_tick == 1
+        client.post(f'/api/maps/{m.id}/tick/1/reset/', {})
+        m.refresh_from_db()
+        assert m.sub_tick == 0
+
     def test_reset_missing_tick_404(self, client, map_factory):
         m = map_factory()
         assert client.post(f'/api/maps/{m.id}/tick/9/reset/', {}).status_code == 404

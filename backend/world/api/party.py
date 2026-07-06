@@ -4,7 +4,7 @@ from ninja import Router, Schema
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 
-from world.models import Map, Hex, PartyTick
+from world.models import Map, Hex
 from world.models.party import Party
 from world.actions import perform_party_action, PartyActionError
 
@@ -25,7 +25,6 @@ class PartySchema(Schema):
     tracks_supplies: bool
     is_lost: bool
     current_hex: Optional[int]
-    destination: Optional[int]
     current_action: Optional[str]
     last_action: Optional[str]
 
@@ -36,10 +35,6 @@ class PartySchema(Schema):
     @staticmethod
     def resolve_current_hex(obj):
         return obj.current_hex_id
-
-    @staticmethod
-    def resolve_destination(obj):
-        return obj.destination_id
 
 
 @router.get("/maps/{map_id}/party/", response=PartySchema)
@@ -101,28 +96,6 @@ def party_action(request, party_id: int, body: PartyActionSchema):
         'party_tick_id': outcome.party_tick.id,
         **outcome.extra,
     }
-
-
-@router.patch("/party/{party_id}/ticks/{party_tick_id}/notes/")
-@transaction.atomic
-def update_party_tick_notes(request, party_id: int, party_tick_id: int, notes: str):
-    pt = get_object_or_404(PartyTick, id=party_tick_id, party_id=party_id)
-    pt.notes = notes
-    pt.save()
-    return {'id': pt.id, 'notes': pt.notes}
-
-
-class PartySuppliesSchema(Schema):
-    supplies: int
-
-
-@router.patch("/party/{party_id}/supplies/", response=PartySchema)
-@transaction.atomic
-def patch_party_supplies(request, party_id: int, body: PartySuppliesSchema):
-    party = get_object_or_404(Party, id=party_id)
-    party.supplies = max(0, body.supplies)
-    party.save(update_fields=['supplies'])
-    return party
 
 
 class PartyPatchSchema(Schema):

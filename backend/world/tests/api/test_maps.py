@@ -151,10 +151,13 @@ class TestDuplicateMap:
         new_map = Map.objects.get(id=body['id'])
         assert new_map.detail_image.name.startswith('maps/detail')
 
-    def test_duplicate_shares_gallery_image_file(self, client, media_root, map_factory):
-        # CHARACTERIZATION — pins H5: duplicate_map assigns image=gi.image, so the
-        # clone points at the SAME file on disk as the source. Deleting one would
-        # destroy the other's file. Rewrite when H5 is fixed to copy the file.
+    def test_duplicate_copies_gallery_image_file(self, client, media_root, map_factory):
+        # H5 fix: duplicate_map copies each image file, so the clone owns an
+        # independent path. Deleting the clone's gallery image must leave the
+        # source's file on disk.
+        import os
+        from django.conf import settings
+
         source = map_factory(name='Source')
         gi = GalleryImage.objects.create(
             map=source, name='pic',
@@ -163,4 +166,8 @@ class TestDuplicateMap:
         resp = client.post_multipart(f'/api/maps/{source.id}/duplicate/', {'name': 'Copy'})
         assert resp.status_code == 200
         new_gi = GalleryImage.objects.get(map_id=resp.json()['id'])
-        assert new_gi.image.name == gi.image.name  # shared file path (the bug)
+        assert new_gi.image.name != gi.image.name  # independent file path
+
+        source_path = os.path.join(settings.MEDIA_ROOT, gi.image.name)
+        assert client.delete(f'/api/gallery/{new_gi.id}/').status_code == 200
+        assert os.path.exists(source_path)  # source file survives

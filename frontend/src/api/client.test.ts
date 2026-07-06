@@ -41,8 +41,9 @@ describe('api client', () => {
     fetchMock.mockResolvedValue(okResponse({ id: 1 }));
     const result = await api.get<{ id: number }>('/maps/1/');
     expect(result).toEqual({ id: 1 });
+    // No body → no JSON Content-Type header (L7).
     expect(fetchMock).toHaveBeenCalledWith(`${BASE}/maps/1/`, expect.objectContaining({
-      headers: { 'Content-Type': 'application/json' },
+      headers: undefined,
     }));
   });
 

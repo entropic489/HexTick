@@ -21,10 +21,6 @@ class Party(models.Model):
         Hex, null=True, blank=True,
         on_delete=models.SET_NULL, related_name='parties',
     )
-    destination = models.ForeignKey(
-        Hex, null=True, blank=True,
-        on_delete=models.SET_NULL, related_name='party_destinations',
-    )
 
     tracks_supplies = models.BooleanField(default=True)
     is_lost = models.BooleanField(default=False)

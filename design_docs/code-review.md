@@ -1,269 +1,240 @@
 # HexTick Code Review
 
-Date: 2026-07-01. Scope: full backend (`backend/world/`) and frontend (`frontend/src/`).
+Date: 2026-07-05. Scope: full backend (`backend/world/`) and frontend (`frontend/src/`).
 Line numbers reference the state of the code on this date.
+
+This document **replaces** the 2026-07-01 review. Every finding from that review was
+resolved (see git history for the record); its remaining open thread — structural item S5,
+CLAUDE.md drift — is carried forward here as L1. IDs below start fresh and do not collide
+with the old review's IDs. No live `CHARACTERIZATION — pins <id>` test comments reference
+old IDs (only a stale docstring, L2).
+
+Baseline at review time: backend **137 tests green** (`pdm run test`), frontend **116
+tests green** + `tsc -b` clean (in the `hextick-frontend-1` container).
 
 ## How to use this document (instructions for the implementing model)
 
-- Each finding has an ID (`C1`, `H2`, …), severity, exact file/line references, a problem statement, a **Fix** section with explicit instructions, and an **Acceptance** check.
-- Work in severity order: Critical → High → Medium → Low. One finding per commit where practical.
+- Each finding has an ID (`H1`, `M2`, …), severity, exact file/line references, a problem statement, a **Fix** section with explicit instructions, and an **Acceptance** check.
+- Work in severity order: High → Medium → Low. One finding per commit where practical.
 - Findings marked **[VERIFY FIRST]** contain a reproduction step — run it before changing code; if it does not reproduce, stop and report instead of fixing.
-- Obey the project rules in `CLAUDE.md`, especially:
-  - **Never run `makemigrations` or `migrate`.** If a fix changes a model, make the model change only and tell the user to run migrations.
-  - Game logic lives in `actions.py`; models stay dumb; tick records are immutable.
-  - Delete dead code fully (component + styles + store keys + imports), never comment it out.
-- Some findings are design questions marked **[DECISION NEEDED]** — do not implement these without the user choosing an option.
+- Findings marked **[DECISION NEEDED]** are design questions — do not implement without the user choosing an option.
+- Model changes require migrations — generate them, apply per CLAUDE.md's two-path procedure, and report what ran.
+- Obey the project rules in `CLAUDE.md`: game logic lives in `actions.py`; models stay dumb; tick records are immutable; delete dead code fully; add a pinning test with each behavior fix.
 
 ---
 
 ## Status
 
-Structural items track the §1 "Structural analysis" list (S1–S6 map to its six numbered points).
-
-- [x] S1 — `_run_shift`/`party_action` game logic lives in the API layer, not `actions.py` (relates to H1). **Done 2026-07-05:** `run_shift()` + `perform_party_action()` (raising `PartyActionError`) moved to `actions.py`; the `tick.py`/`party.py` routers are now thin validate/serialize + SSE-plumbing wrappers. Behavior-preserving (153 tests green unchanged).
-- [x] S2 — `api.py` monolith → `world/api/` router package. **Done 2026-07-05:** `common.py` + `maps`/`hexes`/`factions`/`knowledge`/`tick`/`party`/`gallery` routers mounted at `/` in `__init__.py`; behavior-preserving (153 tests green, only the conftest redis-patch target moved to `world.api.common._redis`). `_run_shift` stayed in `tick.py` — that relocation is S1.
-- [x] S3 — `HexPanel.tsx` (867 lines) → extract `FactionDetail`/`PartyFooter`/`HexEditForm`/`PoiList`
-- [~] S4 — automated tests (see M9; substantially addressed, gaps remain)
-- [ ] S5 — `design_docs`/CLAUDE.md drift re: deleted Characters feature (see L9)
-- [x] **C1** — `resolve_leader` deleted; `leader: str = ''` serializes directly. Done.
-- [x] **C2** — `rolls = {}` initialized once near `extra = {}`; redundant reset in the move branch removed. Done.
-- [x] **C3** — Resolved by removing the feature rather than fixing the sync: `Party.faction` and `Faction.is_player_faction` deleted entirely (user decision, broader than fix options a/b). Backend (models, `api.py`, `actions.py`, `admin.py`) and frontend (`types/index.ts`, `api/maps.ts`, `FactionsPage`, `PlayerPage`, `AddFactionModal`) updated; `CLAUDE.md` and `design_docs/HexTick.md` doc drift fixed.
-- [x] H1 — `next_action` dispatch. **Done 2026-07-05 (faction simplification):** `tick_faction` now consumes `next_action` (perform then clear) via the new `_select_action` ladder.
-- [x] H2 — `_select_action` priority order. **Resolved by removal 2026-07-05:** the entire priority chain (delve/craft/train/trade/battle) was deleted; factions now use a 4-rule ladder (next_action → destination → night-rest → day d3). No priority ambiguity remains.
-- [x] H3 — scouting radius mismatch. **Resolved by removal 2026-07-05:** `scouting` and all faction-vs-faction range logic deleted.
-- [ ] H4 — `reset_to_tick` partial restore. **Partially addressed 2026-07-05:** the omitted stat columns were removed from `FactionTick`, so snapshot/restore now match for the surviving fields (`speed`/`population`/`current_hex`/`destination`). Party live-state / `sub_tick` restore still outstanding.
-- [ ] H5 — `duplicate_map` shared image files
-- [ ] H6 — `party_action` 500 on no `current_hex`
-- [ ] H7 — first party action on a city map 500s (`PartyTick.tick` null) — found 2026-07-04 while writing pinning tests
-- [x] M1 — disease re-contraction double-apply. **Resolved by removal 2026-07-05:** the entire disease system (`DiseaseType`, `ActiveDisease`, apply/expire) was deleted.
-- [x] M2 — no stat floors. **Resolved by removal 2026-07-05:** `resources`/`technology`/`combat_skill`/`scouting` and the trade/battle math that drove them negative were deleted.
-- [ ] M3 — `update_party_tick_notes` query-param mismatch
-- [ ] M4 — SSE keepalive
-- [ ] M5 — `WorldSettings.get()` N+1 on tick
-- [ ] M6 — `useTickStream` build-breaking type
-- [x] M7 — `create_faction` drops `notes`. **Done 2026-07-05:** `create_faction` now passes `notes=body.notes`.
-- [ ] M8 — factions with `current_hex=None` vanish **[DECISION NEEDED]**
-- [~] M9 — no automated tests — **substantially addressed 2026-07-04.** Backend suite 153 tests (was 47): full API pinning suite (`backend/world/tests/api/`, api.py 0%→95%) ahead of the router split, plus engine tests (`test_actions.py`, actions.py 58%→83%); `pytest-cov` in the `test` dependency-group. **Frontend suite expanded 44→116 tests** (steps 1–6 of the §"Frontend test plan"): added `src/test/renderWithProviders.tsx` helper, component tests for `EventLog`/`DiceModal`/`MonsterModal`/`NPCModal`/`LastActionResultModal`/`ActionModal` (gating matrix + submit body)/`AddFactionModal`/`AddPOIModal`/`BulkHexPanel` (tri-state), api wrappers `maps`/`tick`/`gallery`, and **`HexPanel` characterization tests written before its planned extraction**. Remaining backend gaps: SSE stream generator, random-driven `_run_shift` event emission, deep `duplicate_map` clone branches, `admin.py` (63%). Remaining frontend: `HexMap` render-smoke (step 7, deprioritized).
-- [~] L1 — dead code inventory (8 items). **Partially resolved 2026-07-05:** item 1 (`merge`/`Action.MERGE`) and item 2 (faction `search`) deleted with the faction simplification. Items 3–8 still outstanding.
-- [x] L2 — faction default drift. **Resolved 2026-07-05:** `FactionCreateSchema` defaults now match the model (speed/max_speed 4, population 10) and forward `notes`.
-- [x] L3 — frontend/backend enum drift. **Resolved 2026-07-05:** `ActionType` rewritten to the new set (`supply`/`travel`/`rest`/`search`/`explore`/`social`/`delve`).
-- [ ] L4 — `duplicate_map` N+1 on knowledge
-- [ ] L5 — `Hex.save()` side effect
-- [ ] L6 — concurrency: lock ordering
-- [ ] L7 — `client.ts` Content-Type on GET/DELETE
-- [ ] L8 — `post_tick` day-mode broadcast (no-op note, not a fix)
-- [x] L9 — CLAUDE.md Characters/Knowledge drift. **Done 2026-07-05:** the Characters and Knowledge sections were removed and the Faction-types / `_select_action` / model-layout sections rewritten to match the simplified factions.
+- [ ] S1 — `perform_party_action` if/elif monolith
+- [ ] S2 — ActionList / ActionModal duplication
+- [ ] S3 — dead `events` plumbing
+- [ ] S4 — snapshot/restore field drift (mechanism; see H4 for the acute case)
+- [ ] S5 — hand-maintained TS request types drift
+- [ ] S6 — player client receives full GM data
+- [x] H1 — `is_mobile` never consumed by the engine
+- [ ] H2 — player POI leak in `PoiList`
+- [ ] H3 — `is_lost` not enforced on move
+- [ ] H4 — reset-to-tick does not restore weather or party speed/supplies/is_lost
+- [ ] H5 — admin-created factions get `map=None` and vanish
+- [ ] M1 — GM ActionModal ignores weather
+- [ ] M2 — city-map move gating mismatch (frontend blocks, backend allows)
+- [ ] M3 — SSE publish inside open transaction (gallery publish)
+- [ ] M4 — deleting a published gallery image leaves the player overlay stuck
+- [x] M5 — GM party teleport skips map check and reveal semantics (intended, this is a GM emergency tool)
+- [ ] M6 — `duplicate_map` drops `weather` and `party.is_lost`
+- [ ] M7 — `create_map` 500s on a bad `image_path`; `reveal_mode`/`weather` unvalidated
+- [ ] L1 — CLAUDE.md drift (superseded by the CLAUDE.md rewrite if adopted)
+- [ ] L2 — stale docstring in `tests/api/conftest.py`
+- [ ] L3 — debug `console.log` leftovers
+- [ ] L4 — faction default drift (model 50 vs schema/UI 10)
+- [ ] L5 — `_perform_travel` does not clear `destination` on arrival
+- [ ] L6 — supply `amount` accepted by API but no UI sends it
+- [ ] L7 — GMPage setState-during-render
+- [ ] L8 — `TickAdmin` lists ticks across maps with no map column/filter
+- [ ] L9 — PartyAdmin fieldsets omit newer fields
 
 ---
 
 ## 1. Structural analysis
 
-### Layout and layering
+### What holds up
 
-The documented architecture (models → `actions.py` engine → `api.py` endpoints; React SPA talking to Django Ninja) is mostly respected: models contain no dice rolls or side effects, `actions.py` never imports from `api.py`, and the frontend keeps server state in React Query and UI state in Zustand. The hex-coordinate and move-cost logic is correctly centralized (`utils.py` / `moveCost.ts`).
+The architecture documented in CLAUDE.md is now genuinely enforced in code, and the
+previous review's two big moves (S1/S2 of that review) have settled well:
 
-Structural weaknesses, in priority order:
+- **Layering is clean.** Models contain no dice rolls or side effects (the one `Hex.save()`
+  invariant is a guard, not logic). `actions.py` owns the engine — `run_shift`,
+  `perform_party_action`, the faction ladder, the wilderness/weather rolls — and never
+  imports from the API layer. Routers are thin: validate, delegate, serialize, publish
+  on commit. `PartyActionError`/`PartyActionOutcome` is a good seam.
+- **The router split held.** `world/api/` reads as seven small, single-purpose files;
+  `common.py` correctly centralizes the SSE surface that tests patch.
+- **Single sources of truth are respected**: `move_difficulty`/`computeMoveCost` mirror
+  each other (including the weather table), `hex_distance` is used everywhere, and the
+  frontend keeps server state in React Query and UI state in Zustand with no leakage.
+- **The test culture works.** 137 backend + 116 frontend tests, factory fixtures, a fake
+  redis, characterization pins with an explicit rewrite convention. The previous review's
+  fixes each landed with tests.
 
-1. **`_run_shift` and `party_action` live in `api.py`, not `actions.py`** ([api.py:714-773](../backend/world/api.py), [api.py:1017-1181](../backend/world/api.py)). `CLAUDE.md` states "`actions.py` is the game engine — ALL game logic" but the shift orchestration (tick creation, faction candidate filtering, party supply consumption trigger, city sub-tick logic, player-faction sync) is a ~250-line block inside the API layer. `party_action` alone is a 165-line if/elif chain mixing HTTP validation, game rules, and SSE plumbing. **Recommendation:** move `_run_shift` and per-action party logic into `actions.py` (e.g. `run_shift(map_obj)`, `perform_party_action(party, action, …) -> PartyActionOutcome`), leaving `api.py` endpoints as thin validators/serializers.
-2. **`api.py` is a 1,308-line monolith.** Django Ninja supports `Router`. **Recommendation:** split into `world/api/` package with routers: `maps.py`, `hexes.py`, `factions.py`, `knowledge.py`, `tick.py`, `party.py`, `gallery.py`, mounted from a central `api.py`. Pure mechanical move; no behavior change. Docs: https://django-ninja.dev/guides/routers/ **— DONE 2026-07-05:** `api.py` is now a `world/api/` package (`common.py` + `maps`/`hexes`/`factions`/`knowledge`/`tick`/`party`/`gallery` routers, mounted at `/` in `__init__.py`). All 153 tests green unchanged (only the conftest redis patch target moved to `world.api.common._redis`). `_run_shift` still lives in the API layer (`tick.py`) — relocating it to `actions.py` remains structural item 1, unaddressed.
-3. **`HexPanel.tsx` is 867 lines** with at least six responsibilities (hex view, hex edit form, POI list + detail expand, faction list + faction edit form, party footer + party edit form, Last Move panel). **Recommendation:** extract `FactionDetail`, `PartyFooter`, `HexEditForm`, `PoiList` into sibling components under `components/HexPanel/`.
-4. **Automated tests** — originally zero; as of 2026-07-04 the backend has a 153-test pytest suite (`backend/world/tests/`) covering the tick engine (`test_actions.py`) and all `api.py` endpoints (`tests/api/`, api.py 0%→95%). See M9 for the full inventory. The API tests are deliberately **characterization/pinning** tests written ahead of the router split (structural item 2) — they lock current behavior, bugs included, so the split can be verified as behavior-preserving. Frontend test scaffolding now exists (Vitest + RTL + jsdom, 2026-07-04): 44 tests across `utils/moveCost`, `components/HexMap/hexGeometry`, `store/useGameStore`, the `hooks/useTickStream` SSE-routing hook, the `api/client` fetch wrapper, and the `TimeOfDayBadge` component (first render test). Remaining backend gaps: `admin.py` (63%), the SSE stream, and random-driven `_run_shift` event emission. Frontend still untested: the larger stateful components (HexPanel, HexMap, the modals) and the resource-specific api wrappers (`maps.ts`, `tick.ts`, `gallery.ts` — though they're thin pass-throughs over the now-covered `client.ts`).
-5. **`design_docs/` drift**: `CLAUDE.md` documents a Characters feature (`Character`, `CharacterTick`, `Item` models, `tick_character`, `update_character_visibility`, `CharactersPage`, `/map/:mapId/characters` route, `GET/POST /maps/{map_id}/characters/`) that was deleted in migration 0030. None of it exists in code. See L-9.
+### Structural weaknesses, in priority order
+
+1. **S1 — `perform_party_action` is a 180-line if/elif monolith**
+   ([actions.py:352-530](../backend/world/actions.py)). It moved to the right file (old S1)
+   but kept its shape: nine action branches, each repeating the
+   `last_action = current_action; current_action = X; save()` bookkeeping, plus city
+   sub-tick math, shift firing, lock setting, and SSE assembly in one function. Every new
+   party action grows it. **Recommendation:** extract one function per action
+   (`_do_move`, `_do_rest`, …) each returning `(rolls, extra, sse_messages)`, dispatched
+   from a dict; keep the shared bookkeeping and the shift/sub-tick epilogue in
+   `perform_party_action`. Pure refactor — the existing API pinning tests verify it.
+
+2. **S2 — `ActionModal` and `ActionList` are near-verbatim duplicates**
+   ([components/ActionModal/ActionModal.tsx](../frontend/src/components/ActionModal/ActionModal.tsx),
+   [components/ActionList/ActionList.tsx](../frontend/src/components/ActionList/ActionList.tsx)).
+   The `ActionDef[]` gating matrix, `formatMoveCost`, and the mutation (including the
+   `setMoveResult` block and the five invalidations) are copy-pasted; they have already
+   drifted (M1: the modal dropped the `weather` argument). **Recommendation:** extract a
+   shared `usePartyActions(party, selectedHex, originHex, mapId, tickNumber, weather)`
+   hook returning `{ actions, mutate, isPending, error }`; the two components become thin
+   list/modal renderers. The existing `ActionModal.test.tsx` gating-matrix test pins the
+   behavior through the refactor.
+
+3. **S3 — the `events` pipeline is dead.** `run_shift` always returns `(tick_number, [])`
+   ([actions.py:290](../backend/world/actions.py)); nothing ever appends an event. Yet
+   `TickEventSchema`/`TickResponseSchema` ([api/common.py:60-69](../backend/world/api/common.py)),
+   `PartyActionOutcome.events`, the `events` key in both endpoint responses, the frontend
+   `TickEvent` type, the Zustand `pendingEvents` keys, and the `EventLog` component (both
+   pages render it) all exist to carry that permanently-empty list. Under CLAUDE.md's
+   "delete dead code immediately" rule this is the largest violation in the codebase.
+   **[DECISION NEEDED]:** (a) delete the whole pipeline end-to-end (backend schemas +
+   frontend EventLog/pendingEvents), or (b) keep it because faction tick events are
+   planned soon — in which case make `tick_faction` results actually emit events so the
+   pipe carries something. Recommend (a); it can be re-added when a producer exists.
+
+4. **S4 — snapshot/restore drift has no mechanism, only vigilance.** The previous review's
+   H4 fixed the then-known omissions; since then two new pieces of live state appeared and
+   are again not covered: `Map.weather` (now mutated by wilderness rolls) and
+   `Party.speed/supplies/is_lost` (never snapshotted on `PartyTick`). See H4 for the acute
+   fix. Structurally: there is no single place that pairs "state the shift can mutate"
+   with "state a snapshot row records" with "state `reset_to_tick` restores" — each new
+   mechanic must remember to touch all three. **Recommendation:** after fixing H4, add an
+   engine test that runs shifts mutating *every* mutable live field, resets, and asserts
+   full equality of the mutated set — so the next drift fails a test instead of a session.
+
+5. **S5 — hand-maintained TS request types drift silently.** `PatchHexParams`
+   ([api/maps.ts:7-13](../frontend/src/api/maps.ts)) is missing `has_roads`/`has_rivers`/
+   `can_enter`/`linked_map_id` even though `HexEditForm` sends them; `PartyPatch`
+   ([api/tick.ts:52-60](../frontend/src/api/tick.ts)) is missing `tracks_supplies` even
+   though `PartyFooter` sends it; `PartyActionRequest` ([types/index.ts](../frontend/src/types/index.ts))
+   is missing `amount`. All compile because TS doesn't excess-check spreads/variable
+   assignments — so the types are worse than useless: they document the wrong contract.
+   **Recommendation:** complete the three types now (see the field lists in the backend
+   schemas); longer-term consider generating types from the Ninja OpenAPI schema
+   (`/api/openapi.json`) instead of hand-mirroring. Docs: https://django-ninja.dev/guides/response/
+
+6. **S6 — the trust model is "the player won't open devtools".** The player page consumes
+   the same `HexSchema`/`POISchema`/`FactionSchema` as the GM: hex `resources`,
+   `encounter_likelihood`, POI `notes`, `hidden`, and every faction's position/destination
+   arrive in the player browser and are merely not rendered (and H2 shows how easily a
+   render slip leaks them). For a local two-tab table app this is acceptable — but it is a
+   standing constraint, not an oversight, and should be recorded in CLAUDE.md (the
+   CLAUDE.md rewrite does this). No code change recommended now; if it ever matters,
+   the fix is player-scoped response schemas, not frontend filtering.
 
 ### Data-model observations
 
-- Tick snapshot models (`HexTick`, `FactionTick`, `PartyTick`) are append-only as documented, but `FactionTick` snapshots more than `reset_to_tick` restores (H4) — the snapshot/restore pair has no single field list, so they drift.
-- `Faction` numeric stats have no floors/caps at the model or engine level; several engine paths push `combat_skill`, `resources`, `population` negative (M3).
-- `Hex.resources` grows without bound (+`resource_generation × hex_resource_tick_modifier` every morning, only drained by faction `supply`). Consider a cap if long campaigns matter.
+- `Hex.resources` still grows without bound (morning tick adds `resource_generation ×
+  modifier`; nothing drains it since faction `supply` became flavour-only). Harmless
+  today; cap it if long campaigns matter.
+- `Faction.next_action` accepts party-only actions (`search`/`explore`/…) via
+  `PATCH /factions/{id}/` — `_select_action` handles this gracefully (records it without
+  effect, [actions.py:170-171](../backend/world/actions.py)), and the UI only offers
+  supply/travel/rest, so this is fine; noted so nobody "fixes" the pass-through.
+- `Party.resource_generation` is stored, editable in two UIs, snapshotted nowhere, and
+  read by no engine path — candidate for the next dead-code sweep, or for the supply
+  mechanic it presumably anticipates. **[DECISION NEEDED]** before deleting.
 
 ---
 
 ## 2. Findings
 
-### CRITICAL
-
----
-
-#### C1 — `FactionSchema.resolve_leader` reads a nonexistent `leader_id` attribute **[VERIFY FIRST]**
-
-- **Status:** Done
-- **Severity:** Critical
-- **File:** [backend/world/api.py:507-509](../backend/world/api.py)
-
-`Faction.leader` was converted from a `ForeignKey(Character)` to a `CharField` in migration `0030_alter_faction_leader_…` ([backend/world/models/faction.py:34](../backend/world/models/faction.py)). A `CharField` does not create a `leader_id` attribute, so the resolver:
-
-```python
-@staticmethod
-def resolve_leader(obj):
-    return obj.leader_id
-```
-
-raises `AttributeError` when the schema serializes, which would 500 every `GET /maps/{id}/factions/`, `PATCH /factions/{id}/`, and `POST /maps/{id}/factions/`.
-
-**Verify:** `cd backend && USE_SQLITE=true pdm run python manage.py shell -c "from world.models import Faction; print(Faction(name='x').leader_id)"` — expect `AttributeError`. Then hit `GET /api/maps/1/factions/` on a running instance and confirm the 500.
-
-**Fix:** delete the `resolve_leader` static method entirely — `leader: str = ''` on the schema will serialize the CharField directly with no resolver.
-
-**Acceptance:** faction list endpoint returns 200 with `leader` as a string; faction PATCH round-trips a `leader` value.
-
----
-
-#### C2 — `UnboundLocalError` on `rolls` for supply/rest actions on city maps
-
-- **Status:** Done
-- **Severity:** Critical
-- **File:** [backend/world/api.py:1085-1094](../backend/world/api.py) (supply), [api.py:1112-1119](../backend/world/api.py) (rest), crash site [api.py:1177](../backend/world/api.py)
-
-In `party_action`, `rolls` is only assigned:
-- in the `move` branch (`rolls = {}` then possibly `party_move_rolls(...)`),
-- in the `supply`/`rest` branches **only when the map is not a city map** (`if supply_map and supply_map.map_type != MapType.CITY: rolls = ...`).
-
-Line 1177 then evaluates `if body.action in ('move', 'supply', 'rest') and rolls:`. For a **supply or rest action on a city map**, `rolls` was never bound → `UnboundLocalError` → 500 → the whole transaction (including the already-run shift) rolls back.
-
-**Fix:** initialize `rolls: dict = {}` once near the top of `party_action` (next to `extra = {}` at line 1022) and remove the now-redundant `rolls = {}` inside the move branch.
-
-**Acceptance:** on a map with `map_type='city'`, `POST /api/party/{id}/action/` with `{"action": "supply"}` and `{"action": "rest"}` both return 200.
-
----
-
-#### C3 — Player-faction sync after a move can teleport the party back to its old hex **[VERIFY FIRST]** **[DECISION NEEDED]**
-
-- **Status:** Done — resolved by removing `Party.faction`/`Faction.is_player_faction` entirely rather than fix option (a) or (b) below (user decision). Migration pending.
-- **Severity:** Critical (silent state corruption) — downgrade to High if no party has a linked faction in practice
-- **File:** [backend/world/api.py:1051-1054](../backend/world/api.py) and [api.py:1162-1165](../backend/world/api.py)
-
-Sequence when a party with `faction.is_player_faction=True` moves:
-1. Line 1045: `party.current_hex = destination; party.save()` — party is at the destination.
-2. Lines 1051-1054: the faction gets `current_action = TRAVEL`, `destination = destination` — but **its `current_hex` is not changed**.
-3. `_run_shift` runs. In `tick_faction` ([actions.py:187-194](../backend/world/actions.py)), player factions **skip `_select_action`** — nothing in the engine ever moves a player faction toward its destination.
-4. Lines 1162-1165: `party.refresh_from_db(); party.current_hex = party.faction.current_hex; party.save()` — the party is set back to the faction's **unchanged, old** hex, silently undoing the move made in step 1.
-
-**Verify:** create a party linked to an `is_player_faction` faction, both on hex A; `POST action=move` to adjacent hex B; then `GET /maps/{id}/party/` — if `current_hex` is back to A, the bug is confirmed.
-
-**Fix options (user must choose):**
-- **(a) Faction follows party** (likely intent): replace lines 1051-1054 with `party.faction.current_hex = destination; party.faction.current_action = Action.TRAVEL; party.faction.destination = None; party.faction.save()`, and delete the sync-back block at 1162-1165.
-- **(b) Party follows faction**: keep the sync-back but make the engine actually move player factions with a destination (contradicts the "player factions don't auto-tick" rule — not recommended).
-
-**Acceptance:** after a party move, both `party.current_hex` and `party.faction.current_hex` equal the destination.
-
----
-
 ### HIGH
 
 ---
 
-#### H1 — `Faction.next_action` is stored and editable but never consumed by the engine
+#### H1 — `Faction.is_mobile` is stored, editable, snapshotted — and never read by the engine
 
-- **Severity:** High (advertised feature has no effect)
-- **Files:** [backend/world/actions.py:180-194](../backend/world/actions.py), [backend/world/api.py:559](../backend/world/api.py) (patch schema), HexPanel faction edit form
+- **Severity:** High (advertised flag has no effect — same class as the old review's H1)
+- **Files:** [backend/world/actions.py:148-194](../backend/world/actions.py) (`_select_action` — no `is_mobile` check), [actions.py:306-313](../backend/world/actions.py) (`travel`), [models/faction.py:32](../backend/world/models/faction.py)
 
-`next_action` is settable via `PATCH /api/factions/{id}/` and the HexPanel edit form, and `CLAUDE.md` describes GM/player factions acting on a GM-set action. But `tick_faction` only ever **clears** it (`faction.next_action = None` for NPC factions, [actions.py:191](../backend/world/actions.py)) and never reads it. GM/player factions tick with `ActionResult(action=faction.current_action)` — a snapshot label with no executed effect either.
+`is_mobile` is settable at creation (`AddFactionModal`, `FactionCreateSchema`), patchable, filtered on in admin, and snapshotted into `FactionTick` — but `grep is_mobile backend/world/actions.py` finds only the snapshot write. An "immobile" faction wanders on daytime rule 4, steps toward GM destinations, and travels on `next_action=TRAVEL` exactly like a mobile one.
 
-**Fix (intended semantics per CLAUDE.md faction-types table):** in `tick_faction`, for GM/player factions: if `faction.next_action` is set, promote it (`faction.current_action = faction.next_action; faction.next_action = None`) **and dispatch the corresponding action function** (`supply`/`travel`(toward `destination`)/`trade`/`train`/`craft`/`delve`/`battle` — reuse the same functions `_select_action` calls; skip actions needing a target that is absent, falling back to `ActionResult(action=..., success=False, notes='no valid target')`). Keep NPC behavior unchanged.
+**Fix [DECISION NEEDED — choose the semantics]:**
+- **(a) Immobile = never moves** (likely intent): in `_select_action`, when `not faction.is_mobile`, skip rules 2's step and 4's wander (rest/supply instead), and make `_perform_travel` fall through to `rest`. A GM who wants a one-off move can still PATCH `current_hex` directly.
+- **(b) Immobile = no autonomous wandering, GM overrides still work**: only rule 4's wander checks the flag; `destination`/`next_action` paths ignore it (consistent with how `movement_restricted` treats GM overrides).
 
-**Acceptance:** setting `next_action='train'` on a GM faction and firing a shift increases its `combat_skill` and records a `FactionTick` with `action='train'`; `next_action` is null afterward.
+**Acceptance:** engine test — a faction with `is_mobile=False` on a day tick with adjacent candidates records SUPPLY or REST, never TRAVEL (option a: also with `destination` set; option b: destination still moves it). Update the CLAUDE.md faction-ladder section to state the chosen rule.
 
 ---
 
-#### H2 — `_select_action` priority order makes delve/craft branches unreachable; diverges from documented spec **[DECISION NEEDED]**
+#### H2 — Player hex panel shows unrevealed POIs (ignores `player_visible`)
 
-- **Severity:** High (game balance / spec mismatch)
-- **File:** [backend/world/actions.py:154-177](../backend/world/actions.py)
+- **Severity:** High (information leak defeating the search mechanic)
+- **File:** [frontend/src/components/HexPanel/PoiList.tsx:12](../frontend/src/components/HexPanel/PoiList.tsx)
 
-`CLAUDE.md` documents the priority as: … 6) comfort ≥ 0 → supply, 7) comfort < 0 → travel, 8) dungeon delve, 9) craft, 10) train. The code implements 6/7 as an if/else that **returns in both arms whenever any adjacent hex exists**:
-
-```python
-if faction.comfort(...) >= 0:
-    return supply(...)
-else:
-    best = min(candidate_hexes, ...)
-    if best:
-        return travel(...)
-# delve / craft / train only reachable when comfort < 0 AND no candidates
+```ts
+const visible = pois.filter((p) => gmMode || !p.hidden);
 ```
 
-Consequences: NPC factions essentially never delve, craft, or train (train only via the `travel()` speed-fallback). Additional spec mismatches in the same block:
-- Delve gate uses `faction.resources > modifier(faction.population)` (line 169); CLAUDE.md says `resources > population`.
-- Craft gate likewise uses `modifier(faction.population)` (line 174).
+For players this filters only `hidden` — `player_visible` is never consulted. A player who clicks any visible hex sees every non-hidden POI (name, type, difficulty, description) **before** searching, making the `search` action (whose whole effect is `reveal_pois_on_search` flipping `player_visible`) pointless. The map-layer star ([HexCell.tsx:60](../frontend/src/components/HexMap/HexCell.tsx)) checks `p.player_visible` correctly — the two disagree. The expanded detail also renders the `visible`/`explored` flag chips to players ([PoiList.tsx:44-47](../frontend/src/components/HexPanel/PoiList.tsx)), which is GM bookkeeping.
 
-**Fix (needs user decision on intended rules):** if CLAUDE.md is the spec, restructure so delve/craft checks run **before** the comfort travel/supply fallthrough or at least before `return supply(...)`, and align the resource thresholds with the doc (or update the doc to match the code). Add unit tests pinning the chosen priority order.
+**Fix:** change the filter to `gmMode ? pois : pois.filter((p) => p.player_visible && !p.hidden)` (hidden POIs stay GM-only even if some path sets them visible), and gate the flag-chips row with `gmMode`.
 
-**Acceptance:** a test faction on a hex with a visible dungeon, `resources > population`, and a passing theology roll produces `action='delve'` on tick.
+**Acceptance:** frontend test — render `PoiList` with `gmMode={false}` and a mix of `{player_visible: false}` / `{player_visible: true, hidden: false}` POIs; only the latter renders. GM mode renders all. (Colocate as `PoiList.test.tsx`.)
 
 ---
 
-#### H3 — Scouting radius computed two different ways (prefilter vs. selection)
+#### H3 — A lost party can keep moving; the next move's roll silently un-loses it
 
-- **Severity:** High (NPC AI effectively blind with default stats)
-- **Files:** [backend/world/api.py:729-735](../backend/world/api.py) vs [backend/world/actions.py:119-122](../backend/world/actions.py)
+- **Severity:** High (core Cairn travel rule not enforced anywhere)
+- **Files:** [backend/world/actions.py:378-408](../backend/world/actions.py) (move branch — no `is_lost` check; line 407 `party.is_lost = rolls['lost']` overwrites), [frontend/src/components/ActionList/ActionList.tsx:40-56](../frontend/src/components/ActionList/ActionList.tsx) (Move gating — no `is_lost` check)
 
-`_run_shift` prefilters `nearby` with `hex_distance(...) <= modifier(faction.scouting)` (i.e. `scouting // 10` — **0** for the default `scouting=1`, so only same-hex factions pass). `_select_action` then filters the already-filtered list with `hex_distance(hex, f.current_hex) <= faction.scouting` (raw score). Two sources of truth; the tighter one (modifier) always wins, so raising `scouting` from 1→9 does nothing and the doc'd "scouting range" is ambiguous.
+CLAUDE.md and the `clear_lost` action (which charges terrain cost to recover) both encode the rule "a lost party must clear lost before moving again". Nothing enforces it: the backend move branch never checks `party.is_lost`, and line 407 assigns the *new* roll's result, so a lost party that moves and rolls 1–5 becomes un-lost for free — `clear_lost`'s cost is strictly optional. The frontend Move button is equally ungated.
 
-**Fix:** pick one definition — recommended: **raw `faction.scouting` as hex radius** (matches `_select_action` and gives the stat visible effect). Change the `_run_shift` prefilter to `<= faction.scouting` and delete the redundant re-filter in `_select_action` (keep the `min(...)`-closest computation). If modifier-based range is intended instead, change `_select_action` to use `modifier(faction.scouting)` and update CLAUDE.md.
+**Fix:** in `perform_party_action`'s move branch, before anything else: `if party.is_lost: raise PartyActionError('Party is lost — clear lost before moving.')`. Mirror in the frontend gating matrix (`enabled: … && !party.is_lost`, disabledReason `'Party is lost.'`) in the shared hook once S2 lands (or in both components before then). Rest/supply/search while lost remain allowed (resting while lost is legitimate).
 
-**Acceptance:** a faction with `scouting=3` reacts (battle/trade/flee) to a faction 3 hexes away; with `scouting=1` it does not.
-
----
-
-#### H4 — `reset_to_tick` restores only a subset of snapshotted state
-
-- **Severity:** High (time-travel reset silently corrupts campaign state)
-- **File:** [backend/world/api.py:934-970](../backend/world/api.py)
-
-`FactionTick` snapshots `scouting`, `theology`, `famine_streak` ([models/ticks.py](../backend/world/models/ticks.py)) but the reset's `Faction.objects.update(...)` omits all three. Also not restored: `Faction.is_dead` / dead factions (excluded from ticking, so they have no snapshot at later ticks but remain dead after reset to a tick where they were alive), active diseases, `Faction.last_action`/`current_action`, `Party` live state (a `PartyTick` snapshot exists at-or-before the target tick), and `Map.sub_tick` on city maps.
-
-**Fix, in scope order:**
-1. Add `scouting=ft.scouting, theology=ft.theology, famine_streak=ft.famine_streak` to the faction update (pure omission — no schema change).
-2. Restore party live state from the most-recent `PartyTick` at-or-before the target tick (`current_hex_id`, `destination_id`, `current_action=pt.action`, `last_action`).
-3. Reset `map_obj.sub_tick = 0` alongside `current_tick`.
-4. `is_dead`/diseases require new snapshot fields on `FactionTick` (model change → **user runs migrations**) — propose separately, do not bundle.
-
-**Acceptance:** run 5 shifts mutating a faction's theology/famine, reset to tick 2, and confirm the faction's live `scouting/theology/famine_streak` equal its tick-2 `FactionTick` row.
+**Acceptance:** API test — party with `is_lost=True`, `POST action=move` returns 400 and the party has not moved; after `clear_lost`, the same move returns 200. Frontend: Move button disabled when `party.is_lost`.
 
 ---
 
-#### H5 — `duplicate_map` shares image files with the source; deleting a duplicate's gallery image destroys the original's file
+#### H4 — `reset_to_tick` does not restore `Map.weather` or `Party.speed/supplies/is_lost`
 
-- **Severity:** High (permanent data loss of uploaded media)
-- **Files:** [backend/world/api.py:170-213](../backend/world/api.py) (duplicate assigns `image=source.image` / `image=gi.image` — same storage path), [api.py:1288-1293](../backend/world/api.py) (`delete_gallery_image` calls `img.image.delete(save=False)` which removes the file from disk)
+- **Severity:** High (time-travel reset silently corrupts campaign state — recurrence of the old review's H4 for state added since)
+- **Files:** [backend/world/api/tick.py:131-180](../backend/world/api/tick.py) (reset), [backend/world/models/ticks.py:59-75](../backend/world/models/ticks.py) (`PartyTick` — no speed/supplies/is_lost), [backend/world/models/world.py:50](../backend/world/models/world.py) (`Map.weather`), [backend/world/actions.py:44-54](../backend/world/actions.py) (`_shift_weather` mutates it)
 
-After duplicating a map, both `GalleryImage` rows point at the same file under `media/gallery/`. Deleting either one deletes the file, breaking the other (and the same applies to `Map.image` if map deletion ever removes files).
+Weather is no longer a static GM dial: wilderness Weather events shift `map.weather` mid-play. Nothing snapshots it (`Tick` has no weather column), so resetting to tick N keeps the *current* weather. Likewise `Party.speed`, `supplies`, and `is_lost` mutate every action/shift but `PartyTick` doesn't record them, so a reset restores the party's hex/action but not its speed, supplies, or lost state — a "rewind" that leaves the party half in the future.
 
-**Fix (two parts):**
-1. In `duplicate_map`, copy the underlying files: for each cloned image field, open the source file and save it to a new name, e.g. `new_gi.image.save(os.path.basename(gi.image.name), ContentFile(gi.image.read()), save=True)` (`from django.core.files.base import ContentFile`). Same for `new_map.image`.
-2. Defensively, in `delete_gallery_image`, only delete the file if no other `GalleryImage` (or `Map`) row references the same `image.name`.
+**Fix (model changes → migrations):**
+1. Add `weather = models.CharField(max_length=20)` to `Tick`; set it in `run_shift` when creating the tick (snapshot the *pre-shift* value is fine — pick one and document); restore `map_obj.weather = tick.weather` in `reset_to_tick`.
+2. Add `speed`, `supplies`, `is_lost` to `PartyTick`; write them in `_create_party_tick`; restore them in the reset's party update.
+3. Then add the S4 full-field regression test.
 
-**Acceptance:** duplicate a map with one gallery image; delete the duplicate's gallery image; the source map's gallery image still loads over HTTP.
+Note the mid-shift wrinkle: on regional maps the wilderness roll fires *after* `run_shift` inside the same action, so a same-tick weather shift postdates the snapshot — acceptable (the reset lands on the shift boundary), but state the choice in a comment.
 
----
-
-#### H6 — `party_action` 500s when the party has no `current_hex` (non-move actions)
-
-- **Severity:** High (unhandled 500, easy to hit on a freshly created party)
-- **File:** [backend/world/api.py:1021](../backend/world/api.py) (`map_id = party.current_hex.map_id if party.current_hex else None`), crash at [api.py:1143](../backend/world/api.py)/[api.py:1158](../backend/world/api.py)
-
-For `search`/`supply`/`social`/`rest` with `party.current_hex = None`: `map_id` stays `None`, `Map.objects.get(id=None)` raises `Map.DoesNotExist` at line 1143, and even if it survived, `_run_shift(None)` would crash. Note `party.map_id` exists (`Party.map` OneToOneField) and is the better source.
-
-**Fix:** derive `map_id` as `party.current_hex.map_id if party.current_hex else party.map_id`; if still `None`, return 400 `'Party is not on a map.'` early.
-
-**Acceptance:** `POST /api/party/{id}/action/` with `{"action": "rest"}` on a party with `current_hex=None` but `map` set returns 200 and fires a shift; with neither set returns 400.
+**Acceptance:** run 4 shifts forcing a weather shift and party speed/supply changes, reset to tick 1, assert `map.weather`, `party.speed`, `party.supplies`, `party.is_lost` all equal their tick-1 values.
 
 ---
 
-#### H7 — First party action on a city map 500s because `PartyTick.tick` is null
+#### H5 — Factions created or edited in Django admin get `map=None` and vanish from the app
 
-- **Severity:** High (unhandled 500 on a normal first action; found 2026-07-04 while writing pinning tests — not in the original review)
-- **File:** [backend/world/api.py:1126-1149](../backend/world/api.py) (`party_action` sub-tick path), [api.py:990-1002](../backend/world/api.py) (`_create_party_tick`), [backend/world/models/ticks.py](../backend/world/models/ticks.py) (`PartyTick.tick` FK)
+- **Severity:** High (admin path silently reintroduces the old M8 bug the `map` FK was added to kill)
+- **File:** [backend/world/admin.py:111-123](../backend/world/admin.py) (`FactionAdmin.fieldsets` — no `map`)
 
-On a **city map**, the first party action is a mid-shift sub-tick: `map_obj.sub_tick` goes 0→1, so `is_shift` is False and `_run_shift` never runs. On a freshly created map `map_obj.current_tick` is still `None` (no `Tick` rows exist yet), so `tick = map_obj.current_tick` is `None`. `_create_party_tick(party, tick=None, …)` then does `PartyTick.objects.update_or_create(tick=None, …)`; `PartyTick.tick` is a non-null FK → `IntegrityError: NOT NULL constraint failed: world_partytick.tick_id` → 500, rolling back the action. Regional maps are unaffected (every action runs a shift, creating the tick first).
+`Faction.map` is now the source of truth for list/`run_shift`/duplication membership, but `FactionAdmin`'s explicit fieldsets omit it. A faction created in admin saves with `map=None`: it appears in no list, never ticks, and is skipped by duplication — while looking perfectly healthy in admin. (Django admin with explicit `fieldsets` simply never renders the missing field.)
 
-**Verify:** on a `map_type='city'` map with no ticks, `POST /api/party/{id}/action/` with `{"action": "supply"}` returns 500. Pinned by `backend/world/tests/api/test_party.py::TestCityMapActions::test_first_action_on_fresh_city_map_500` (characterization — expects the current 500).
+**Fix:** add `'map'` to the first fieldset tuple (next to `current_hex`). Consider also `list_display` + `list_filter` on `map` for parity with `HexAdmin`.
 
-**Fix (choose one):**
-- **(a) Guarantee a tick before sub-tick actions** — when a city map's first action fires mid-shift with no `current_tick`, run/seed the shift so a `Tick` exists (or seed tick 0/1 at map creation). Keeps `PartyTick.tick` non-null.
-- **(b) Make `PartyTick.tick` nullable** (model change → **user runs migrations**) and handle null downstream in the tick-state/history lookups. Broader blast radius; not recommended.
-
-**Acceptance:** the first `supply`/`rest` action on a fresh city map returns 200 and records a `PartyTick`; rewrite the pinning test to assert 200.
+**Acceptance:** creating a faction via admin with a map selected makes it appear in `GET /maps/{id}/factions/` and tick on the next shift. (Manual check is fine; admin is untested.)
 
 ---
 
@@ -271,153 +242,96 @@ On a **city map**, the first party action is a mid-shift sub-tick: `map_obj.sub_
 
 ---
 
-#### M1 — Disease re-contraction double-applies stat effects, causing permanent drift
+#### M1 — GM "Actions…" modal ignores weather in move costs
 
-- **Severity:** Medium
-- **File:** [backend/world/actions.py:311-347](../backend/world/actions.py)
+- **Severity:** Medium (wrong cost shown; catastrophic weather not flagged — drift caused by the S2 duplication)
+- **File:** [frontend/src/components/ActionModal/ActionModal.tsx:36](../frontend/src/components/ActionModal/ActionModal.tsx) (`computeMoveCost(originHex, selectedHex, tickNumber)` — no 4th arg, defaults `'fair'`), props lack `weather`; caller [HexPanel.tsx:230-239](../frontend/src/components/HexPanel/HexPanel.tsx)
 
-`_apply_disease` always applies the stat delta (e.g. Restless: `scouting += effect_value`; The Runs: `combat_skill -= effect_value`) and then `update_or_create` **overwrites** `effect_value`. If a faction re-contracts an active disease, the effect is applied a second time but only the second roll is recorded, so `_expire_disease` reverts only the latest amount — the first application leaks permanently. (CLAUDE.md says re-contraction "resets duration rather than stacking" — the duration resets, but stats do stack.)
+`ActionList` (player) passes `map.weather`; `ActionModal` (GM) doesn't, so during inclement/extreme weather the GM modal shows a cost 1–2 lower than the backend charges, and during catastrophic weather Move looks affordable but the backend returns 400 (regional maps). The backend stays correct — this is display/gating drift only.
 
-**Fix:** in `_apply_disease`, check for an existing `ActiveDisease` first: `existing = faction.diseases.filter(disease_type=disease_type).first()`. If found, only refresh `duration_days_remaining` and return; apply stat effects only on first contraction.
+**Fix:** add `weather: WeatherType` to `ActionModal`'s props, pass `map.weather` from `HexPanel` (extend `HexPanel`'s `map` prop type with `weather`), and forward it to `computeMoveCost` plus the `blocked` handling `ActionList` already has. Subsumed by the S2 shared-hook extraction if done together — prefer doing S2 + M1 as one change.
 
-**Acceptance:** applying Restless twice then letting it expire returns `scouting` exactly to its original value.
-
----
-
-#### M2 — No stat floors: `trade`, `battle`, and diseases can push resources/combat_skill/population negative
-
-- **Severity:** Medium (game-balance corruption over long campaigns)
-- **Files:** [backend/world/actions.py:431-455](../backend/world/actions.py) (`trade` subtracts `trade_amount` from the counterparty without checking balance), [actions.py:480-493](../backend/world/actions.py) (`battle`: `winner.combat_skill -= loser.combat_skill // 2` can go negative, then `winner.resources += winner.combat_skill` **reduces** resources; loser population negative until next tick), [actions.py:315-329](../backend/world/actions.py) (Madness/The Runs)
-
-**Fix:** clamp at the point of mutation: `max(0, ...)` on `resources`, `technology`, `combat_skill`, `scouting` in `trade`, `battle`, `_apply_disease`. In `battle`, compute the loot **before** reducing the winner's skill, or clamp: `winner.resources += max(0, winner.combat_skill)`. Leave `population` unclamped (the ≤ 0 → dead check in `tick_faction` handles it) or clamp to 0 there too — either is fine, be consistent.
-
-**Acceptance:** unit test: trade against a faction with 0 resources leaves both parties non-negative; a battle between skill-1 and skill-20 factions leaves all stats ≥ 0 except population-death.
+**Acceptance:** extend `ActionModal.test.tsx`'s gating matrix with a catastrophic-weather case (Move disabled) and an extreme-weather case (cost includes +2).
 
 ---
 
-#### M3 — `update_party_tick_notes` binds `notes` as a query parameter; the frontend sends a JSON body
+#### M2 — City maps: frontend blocks moves the backend allows
 
-- **Severity:** Medium (dormant — no UI calls it yet, but it will 422 the moment one does)
-- **Files:** [backend/world/api.py:1184-1190](../backend/world/api.py), [frontend/src/api/tick.ts:58-59](../frontend/src/api/tick.ts)
+- **Severity:** Medium (players on city maps get stuck in the UI)
+- **Files:** [backend/world/actions.py:389-398](../backend/world/actions.py) (city maps skip speed gating and deduction), [frontend/src/components/ActionList/ActionList.tsx:38-56](../frontend/src/components/ActionList/ActionList.tsx) (gates on `tooSlow` unconditionally)
 
-Django Ninja binds a bare `notes: str` parameter as a **query** param; `patchPartyTickNotes` sends `{ notes }` as JSON. Any future UI wiring gets a 422.
+`perform_party_action` deliberately exempts city maps from the speed economy (`if move_map.map_type != MapType.CITY` around both the gate and the deduction). The frontend gating matrix doesn't know this: a party with speed 0 on a city map has Move disabled ("Not enough speed") even though the backend would accept it. Same for the cost text, which is meaningless on city maps.
 
-**Fix:** define `class PartyTickNotesSchema(Schema): notes: str` and change the signature to `(request, party_id: int, party_tick_id: int, body: PartyTickNotesSchema)`, using `body.notes`.
+**Fix:** pass `map.map_type` into the gating logic (via the S2 shared hook); on city maps skip the `tooSlow` check and show a flat description ('City travel — no speed cost.'). Keep the `player_visible` gate.
 
-**Acceptance:** `curl -X PATCH .../party/1/ticks/1/notes/ -d '{"notes":"x"}' -H 'Content-Type: application/json'` returns 200 with the note persisted.
-
----
-
-#### M4 — SSE stream blocks a gunicorn worker thread per client and sends no periodic keepalive
-
-- **Severity:** Medium (reliability under multiple viewers)
-- **File:** [backend/world/api.py:30-48](../backend/world/api.py)
-
-`pubsub.listen()` blocks forever inside a sync generator: each GM/player tab pins a worker thread for its lifetime, and the `": keepalive"` branch only fires on pubsub control messages (effectively only the initial subscribe), so idle connections can be dropped by proxies/browsers.
-
-**Fix (minimal, no stack change):** replace `pubsub.listen()` with a loop over `pubsub.get_message(timeout=15.0)`; when it returns `None`, yield `": keepalive\n\n"`; when it returns a message dict of type `message`, yield the data frame. Also document that gunicorn needs enough threads for expected concurrent tabs (`--threads`), or note ASGI/`EventStream` as the long-term fix. Docs: https://redis.readthedocs.io/en/stable/advanced_features.html#publish-subscribe
-
-**Acceptance:** with an open EventSource and no ticks for 60s, the client receives keepalive comments and stays connected.
+**Acceptance:** gating-matrix test: city map + speed 0 + visible destination → Move enabled; regional map unchanged.
 
 ---
 
-#### M5 — `WorldSettings.get()` executes a query for every hex on every morning tick
+#### M3 — `publish_gallery_image` publishes SSE inside the open transaction
 
-- **Severity:** Medium (perf; N queries per tick on large maps)
-- **File:** [backend/world/actions.py:270-273](../backend/world/actions.py) (`tick_hex`), caller [api.py:724-725](../backend/world/api.py)
+- **Severity:** Medium (player overlay can refetch before commit and briefly show stale publish state)
+- **File:** [backend/world/api/gallery.py:62-74](../backend/world/api/gallery.py)
 
-`WorldSettings.get()` is `get_or_create` — one query (sometimes two) per hex, per morning tick, inside the tick transaction. A 40×30 map = 1,200 extra queries every third tick. Similarly, `HexTick.objects.create` runs once per hex — acceptable, but the settings lookup is pure waste. Note `tick_hex` also violates the "DB queries stay out of the engine" rule from CLAUDE.md.
+The endpoint is `@transaction.atomic` and calls `publish(...)` synchronously before the transaction commits. A fast SSE consumer invalidates `['gallery', mapId]` and refetches while the row is still uncommitted, seeing the old `is_published` — the overlay then doesn't update until the next event. Every other transactional broadcaster uses `transaction.on_commit` (see `party.py:89-91`, `tick.py:32/36`); the non-atomic endpoints (`locked`/`weather`/`highlight`) are fine synchronous.
 
-**Fix:** fetch `settings = WorldSettings.get()` once in `_run_shift` and pass `hex_resource_tick_modifier` (or the settings object) into `tick_hex` as a parameter. Optional further win: collect `HexTick` rows and `bulk_create` them.
+**Fix:** `transaction.on_commit(lambda: publish(img.map_id, {"type": "gallery_update"}))`. Update the test that asserts the synchronous publish (the api conftest documents which publishes are synchronous) to use `django_capture_on_commit_callbacks`.
 
-**Acceptance:** a shift on an N-hex map performs O(1) `WorldSettings` queries (verify with `django.db.connection.queries` in a test with `DEBUG=True`).
-
----
-
-#### M6 — `useTickStream` accesses `parsed.action`, which is absent from its inline type — production build likely fails **[VERIFY FIRST]**
-
-- **Severity:** Medium (build health; `npm run build` runs `tsc -b`)
-- **File:** [frontend/src/hooks/useTickStream.ts:24](../frontend/src/hooks/useTickStream.ts) (type), [useTickStream.ts:46](../frontend/src/hooks/useTickStream.ts) (`parsed.action ?? 'move'`)
-
-The inline type for `parsed` declares `type/hex_id/lost/lost_roll/wilderness_event/event_roll` but not `action`. `vite dev` does not typecheck, so this only surfaces on `npm run build` (TS2339).
-
-**Verify:** `cd frontend && npx tsc -b --noEmit` (or `npm run build`).
-
-**Fix:** add `action?: string` to the inline type. Better: extract a shared `SseEvent` interface into `types/index.ts` and reuse it. Fix any other errors tsc reports in the same pass.
-
-**Acceptance:** `npm run build` completes with zero TypeScript errors.
+**Acceptance:** existing gallery pinning test rewritten to capture the on-commit callback and still assert exactly one `gallery_update` broadcast.
 
 ---
 
-#### M7 — `create_faction` silently drops `notes` (and other accepted-but-ignored fields)
+#### M4 — Deleting the currently-published gallery image leaves the player overlay up
 
-- **Severity:** Medium (data loss on create)
-- **File:** [backend/world/api.py:520-535](../backend/world/api.py) (schema accepts `notes`), [api.py:595-617](../backend/world/api.py) (create omits it)
+- **Severity:** Medium (GM has no recovery except publishing something else)
+- **File:** [backend/world/api/gallery.py:44-59](../backend/world/api/gallery.py) (`delete_gallery_image` — no publish)
 
-`FactionCreateSchema` accepts `notes` but `Faction.objects.create(...)` never passes it — a note supplied at creation vanishes without error.
+Delete broadcasts nothing. If the deleted image was `is_published`, `PlayerPage`'s cached gallery query still contains it, so the fullscreen overlay persists until some other event invalidates the query. (The image request itself may 404, rendering a broken-image overlay — worse.)
 
-**Fix:** pass `notes=body.notes` in the create call. Audit the create for other schema fields not forwarded (currently just `notes`). Also see L-2 (default drift between schema and model).
+**Fix:** after `img.delete()`, `publish(map_id, {"type": "gallery_update"})` (capture `map_id = img.map_id` before deleting). Not transactional today; if you add `@transaction.atomic`, use `on_commit` per M3.
 
-**Acceptance:** `POST /maps/{id}/factions/` with `notes` set returns the faction and a subsequent GET shows the note.
-
----
-
-#### M8 — Factions with `current_hex = None` disappear from the API entirely
-
-- **Severity:** Medium (confusing data loss appearance)
-- **File:** [backend/world/api.py:538-541](../backend/world/api.py) (`filter(current_hex__map_id=map_id)`); same pattern in `_run_shift` [api.py:722](../backend/world/api.py) and `duplicate_map` [api.py:264-265](../backend/world/api.py)
-
-`Faction` has no `map` FK — map membership is inferred from `current_hex`. A faction whose hex is cleared (GM edit, or `SET_NULL` on hex deletion) vanishes from every list, the map view, and map duplication, but still exists in the DB. This is an architectural gap rather than a bug; at minimum it deserves a decision.
-
-**Fix [DECISION NEEDED]:** either (a) add `Faction.map = ForeignKey(Map)` (model change → user runs migrations; backfill from `current_hex__map`; filter lists by `map_id`), or (b) accept the behavior and guard against it: forbid clearing `current_hex` via `PATCH /factions/{id}/` unless the faction is being deleted, and document the invariant in CLAUDE.md.
-
-**Acceptance (option a):** a faction with a null hex still appears in `GET /maps/{id}/factions/`.
+**Acceptance:** API test — deleting a published image emits one `gallery_update` on the map channel.
 
 ---
 
-#### M9 — No automated tests
+#### M5 — GM party teleport (`PATCH /party/{id}/` with `current_hex`) skips map validation and reveal semantics
 
-- **Status:** Substantially addressed (2026-07-04). Scaffolding uses **pytest + pytest-django** (not `manage.py test` — user preference); config in root `pyproject.toml`, run via `pdm run test`. `pytest-cov` is now in the `test` dependency-group; coverage: **api.py 0%→95%, actions.py 58%→83%, suite 47→153 tests.** Tests:
-  - `test_engine.py` — `hex_distance`, `move_difficulty` matrix.
-  - `test_faction_stats.py` — `modifier()`, `Faction.comfort()`.
-  - `test_diseases.py` — `_apply_disease`/`_expire_disease` round-trips + the M1 re-contraction pin.
-  - `test_select_action.py` — top of the `_select_action` priority chain.
-  - **`test_actions.py`** (new) — the previously-missing engine branches: `_select_action` detour / hostile-steer / outmatched-flee / recent-battle arms, `travel` speed-fallback, `trade`, `battle` (traveler branch + the **M2 negative-stat pin**), `train`/`craft`/`delve`/`merge`, `random_encounter` buckets, and `tick_faction` daily/weekly/death. Randomness pinned per test.
-  - **`tests/api/`** (new package) — end-to-end pinning tests for all 30 `api.py` endpoints, grouped by resource to mirror the planned router split (`test_maps`/`test_hexes`/`test_factions`/`test_knowledge`/`test_tick`/`test_party`/`test_gallery`). Harness in `tests/api/conftest.py` (see below). These pin **current** behavior including the known bugs, so the router split can be verified as behavior-preserving; tests encoding bugs are marked `CHARACTERIZATION — pins <id>` (H4/H5/H6/H7/M3/M7/M8, plus H2/M2 in the engine) and must be rewritten when each fix lands — same convention as the M1 pin.
-  - `tests/conftest.py` / `tests/api/conftest.py` — shared `map_factory`/`hex_factory`/`faction_factory` DB fixtures; the api-level conftest overrides `map_factory` (non-empty `image`), replaces `world.api._redis` with a recording fake, and wraps `django.test.Client` for JSON.
+- **Severity:** Medium (two quiet inconsistencies on a GM-only path)
+- **File:** [backend/world/api/party.py:138-142](../backend/world/api/party.py)
 
-  Remaining backend gaps: SSE stream generator, random-driven `_run_shift` event emission, deep `duplicate_map` clone branches, `admin.py` (63%). H2's delve/craft/train tail is pinned as *unreachable* (characterization) rather than exercised, pending the H2 reorder.
+Two issues:
+1. **No map check:** the hex is fetched by id alone. A GM (or a stale UI) can set `current_hex` to a hex on a *different* map, desyncing `party.map` from `party.current_hex.map`; `perform_party_action` then derives `map_id` from the hex and runs shifts on a map the party record doesn't belong to.
+2. **Reveal drift:** the teleport sets `player_explored=True` on the destination but not `player_visible`, and doesn't reveal adjacents — unlike a real move (`reveal_hex_on_move` sets destination visible+explored and neighbors visible). An explored-but-invisible hex renders half-fogged on grey-fog maps.
 
-  **Frontend scaffolding added 2026-07-04** — **Vitest + React Testing Library + jsdom**. Config in `frontend/vite.config.ts` (`test` key) + `frontend/src/test/setup.ts` (jest-dom matchers, `cleanup()` per test). Scripts: `test` (watch), `test:run` (one-shot), `test:types` (`tsconfig.vitest.json`). Runs **in the `hextick-frontend-1` container** (`docker exec hextick-frontend-1 npx vitest run`) — the Windows host has no Node and WSL's Node is v12 (too old for Vite 8 / Vitest 4). Production build (`tsc -b`) excludes test files via `tsconfig.app.json`; test typechecking is the separate `tsconfig.vitest.json`. Covered so far (44 tests): `utils/moveCost` (mirrors the backend `move_difficulty` matrix — road/terrain base, night +1, weather penalties, catastrophic→blocked); `components/HexMap/hexGeometry` (`hexToPixel` odd-col offset / row-up, `flatTopPoints`, `mapBounds`); `store/useGameStore` (selection resets, multi-select toggles, faction-hex set copying, `setMoveResult` vs `recordMoveResult` sequence bump); `hooks/useTickStream` (SSE event routing — gallery/highlight/move_result/navigation_update/full-invalidate fallback, via a fake `EventSource` + real `QueryClient`); `api/client` (method/body/header handling per verb, `postForm` empty-header multipart, non-ok error text — via a stubbed `fetch`); `TimeOfDayBadge` (morning/afternoon/night label + `Day floor(tick/3)`, first RTL render test). Note M6 is already fixed in code (the inline `parsed` type includes `action`). Still untested: the larger stateful components (HexPanel, HexMap, modals). L3 enum-drift is a natural next target.
+**Fix:** (1) validate `destination.map_id == party.map_id` (400 otherwise) — or, if cross-map teleport is a wanted GM tool for the city-enter flow, also update `party.map` to follow the hex **[DECISION NEEDED — pick one]**. (2) replace the bare `update(player_explored=True)` with the same `reveal_hex_on_move(destination, all_map_hexes)` call the move path uses (import from `world.actions`).
 
-##### Frontend test plan — remaining targets (for a fresh session)
+**Acceptance:** teleporting the party reveals the destination (visible+explored) and its neighbors (visible); teleporting to another map's hex either 400s or moves `party.map` with it, per the decision.
 
-Run everything in the container: `docker exec hextick-frontend-1 npx vitest run` (+ `npm run test:types`, then `npx tsc -b` to confirm the production build). Colocate `*.test.ts(x)` beside the source. Reuse the harness patterns already documented in `CLAUDE.md` → Testing → Frontend (store snapshot/restore, fake `EventSource`, `fetch` stub with `import.meta.env.VITE_API_URL` base). Suggested order — cheapest/highest-value first:
+---
 
-1. **Shared render helper** (`src/test/renderWithProviders.tsx`) — wrap RTL `render` in a fresh `QueryClientProvider` (new `QueryClient` per call, `retry: false`) + `MemoryRouter`, and reset `useGameStore` to its snapshot in `beforeEach`. Every component test below depends on this; build it first. Seed React Query cache via `qc.setQueryData(['gallery', mapId], …)` instead of mocking network where a component reads a query directly.
+#### M6 — `duplicate_map` silently resets `weather` and drops `party.is_lost`
 
-2. **Small pure-ish components (RTL render):**
-   - `ShiftActionsIndicator`, `TimeOfDayBadge` (done) — label/derived-number rendering.
-   - `EventLog` — renders a list of `pendingEvents`; assert empty state vs N rows.
-   - `DiceModal` / `MonsterModal` / `NPCModal` / `LastActionResultModal` — open/closed by prop, renders passed content, calls `onClose`. Use `@testing-library/user-event` for the close button.
+- **Severity:** Medium (duplication is advertised as a faithful copy)
+- **File:** [backend/world/api/maps.py:170-183](../backend/world/api/maps.py) (`Map(...)` — no `weather`), [maps.py:295-308](../backend/world/api/maps.py) (`Party.objects.create(...)` — no `is_lost`)
 
-3. **`api/` resource wrappers** (`maps.ts`, `tick.ts`, `gallery.ts`) — thin; assert each fn calls the right verb+path on a stubbed `client`. Either `vi.mock('./client', …)` and assert the mocked `api.get/post/...` args, or reuse the `fetch` stub and assert the URL. Lower value (pass-throughs over the covered `client.ts`) — do only the non-obvious ones (e.g. `publishGalleryImage` path, `postPartyAction` body shape).
+The clone copies every other gameplay field (deliberately resetting only tick/lock/sub_tick state). `weather` falls back to the model default `fair` and a lost party's duplicate arrives un-lost — both invisible until they matter mid-session.
 
-4. **`AddFactionModal` / `AddPOIModal` / `ActionModal`** (form + submit): render, fill fields with `user-event`, submit, assert the POST body / the passed `onSubmit` payload. `ActionModal` also gates actions by context (current vs other hex, dungeon presence) — pin the enable/disable matrix. Mock the api module so no real fetch fires.
+**Fix:** add `weather=source.weather` to the `Map(...)` kwargs and `is_lost=p.is_lost` to the party create. Skim the field lists once more against the models while there (this is the third "duplicate forgot a field" fix — consider a comment listing the *intentionally* reset fields so additions default to "copy").
 
-5. **`BulkHexPanel`** — tri-state checkbox logic (indeterminate = no change / checked = true / unchecked = false) mapping to the `POST /hexes/bulk-patch/` body. This is fiddly logic worth pinning; assert the constructed payload for each checkbox state.
+**Acceptance:** duplicate test asserting `new_map.weather == source.weather` and `new_party.is_lost == source_party.is_lost`.
 
-6. **`HexPanel`** (867 lines, structural hotspot §1.2 item 3) — do this **after** it's extracted into `FactionDetail` / `PartyFooter` / `HexEditForm` / `PoiList` (structural recommendation), and test the extracted pieces individually. Testing the monolith directly is high-effort/low-signal; the extraction is the prerequisite. Focus: view/edit mode toggle, GM-only gating (`gmMode` prop hides faction edit + party edit), the "Move party here" button visibility rule, and the Last Move panel reading from `moveResult`.
+---
 
-7. **`HexMap`** — mostly SVG geometry (already unit-tested via `hexGeometry`) plus broken scroll-zoom (see CLAUDE.md "not wired up"). Render-smoke only (renders N hex cells for an N-hex map, faction arrows for factions with `current_hex`); do **not** try to test pan/zoom (native listeners + direct DOM mutation, jsdom has no layout). Low priority.
+#### M7 — `create_map` 500s on a missing `image_path`; `reveal_mode` and `weather` accept arbitrary strings
 
-Do **not** chase a coverage %; prioritize logic-bearing components (BulkHexPanel tri-state, ActionModal gating, form submit payloads) over presentational ones. Skip `main.tsx`, route wiring, and CSS-only components.
-- **Severity:** Medium (process; prerequisite for H2/H3/M1/M2)
-- **Files:** `backend/world/tests/`
+- **Severity:** Medium (unhandled 500 on user input; invalid enum values persist)
+- **Files:** [backend/world/api/maps.py:123-129](../backend/world/api/maps.py) (`PILImage.open(abs_path)` — `FileNotFoundError` → 500), [maps.py:111](../backend/world/api/maps.py) (`reveal_mode: Form[str]` unvalidated), [maps.py:78-88](../backend/world/api/maps.py) (`set_map_weather` — unvalidated; an unknown value silently behaves as `fair` in `move_difficulty` but crashes `_shift_weather`'s `WEATHER_ORDER.index`)
 
-See structural analysis §1.4. Original fix note (superseded by the pytest choice above): create `backend/world/tests/test_engine.py` covering, at minimum: `hex_distance` known pairs (odd-q offset cases), `move_difficulty` full matrix (road/no-road × day/night × 5 weathers), `modifier`, `comfort` with/without restless, disease apply→expire round-trip, `travel` speed-fallback, `battle` clamping (after M2), and one end-to-end `_run_shift` smoke test on an in-memory map. Use `USE_SQLITE=true`.
+The `weather` one is the sharpest edge: `PATCH /maps/{id}/weather/` with a typo'd value stores it; the next wilderness Weather event then raises `ValueError` inside `_shift_weather` → 500 → the whole party action rolls back, at the table.
 
-**Acceptance:** `pdm run test` passes; the H2/H3 fixes each land with a pinning test.
+**Fix:** (1) wrap the `image_path` open in `try/except (FileNotFoundError, OSError)` → 400 `'image_path not found'`. (2) validate `reveal_mode in RevealMode.values` → 400. (3) validate `body.weather in WeatherType.values` → 400 (or type the schema field as a `Literal`/enum so Ninja 422s it).
+
+**Acceptance:** API tests — bad `image_path` → 400; `weather: "sunny"` → 400/422; existing happy paths unchanged.
 
 ---
 
@@ -425,115 +339,100 @@ See structural analysis §1.4. Original fix note (superseded by the pytest choic
 
 ---
 
-#### L1 — Dead code inventory (delete per CLAUDE.md "delete dead code immediately")
+#### L1 — CLAUDE.md drift (mechanics changed since it was written)
 
-- **Severity:** Low — but the project's own hard rule says remove these now
-- Items, each independently deletable:
-
-| # | Item | Location | Evidence |
-|---|------|----------|----------|
-| 1 | `merge()` function and `Action.MERGE` choice | [actions.py:458-465](../backend/world/actions.py), [models/faction.py Action](../backend/world/models/faction.py) | No caller anywhere. Removing the enum value touches model choices → needs a (user-run) migration; the TS `ActionType` union also lists `'merge'`. |
-| 2 | `search(faction, hex)` engine function | [actions.py:518-520](../backend/world/actions.py) | No caller; duplicates `reveal_pois_on_search`. (The party `search` action uses `reveal_pois_on_search`, not this.) |
-| 3 | `HexModal` component (69 lines + CSS) | `frontend/src/components/HexModal/` | Imported by nothing. |
-| 4 | `patchPartySupplies` fetch wrapper | [frontend/src/api/tick.ts:62-63](../frontend/src/api/tick.ts) | No UI caller (CLAUDE.md confirms superseded by `patchParty`). Optionally also delete the backend `PATCH /party/{id}/supplies/` endpoint ([api.py:1193-1203](../backend/world/api.py)). |
-| 5 | `HexTick.points_of_interest` M2M | [models/ticks.py:24](../backend/world/models/ticks.py) | Never written (CLAUDE.md: "HexTick does not copy POIs"). Model change → user runs migrations. |
-| 6 | No-op line `hex_obj.pois.all()  # prefetch for resolver` | [api.py:429](../backend/world/api.py) | An unevaluated lazy queryset; prefetches nothing. Delete the line (the resolver queries anyway). Same pattern at [api.py:689](../backend/world/api.py) (`obj.related_knowledge.all()`). |
-| 7 | `Party.destination` field | [models/party.py](../backend/world/models/party.py) | No code path ever sets it (not in `party_action`, not in `PartyPatchSchema`); always null. Displayed in HexPanel footer and snapshotted into `PartyTick` as permanently-null data. Either wire it up or delete it (model change → user migration + PartySchema/TS/HexPanel cleanup). **[DECISION NEEDED]** |
-| 8 | `patchPartyTickNotes` | [frontend/src/api/tick.ts:58-59](../frontend/src/api/tick.ts) | Keep only if M3 is fixed and a UI is planned (CLAUDE.md lists the missing UI as known); otherwise delete both wrapper and endpoint. |
-
-**Acceptance:** `npx tsc -b --noEmit` and `pdm run python manage.py check` pass after each deletion; `grep` finds no remaining references.
-
----
-
-#### L2 — Faction default values drift between model and create schema
-
-- **Severity:** Low
-- **Files:** [models/faction.py:36-45](../backend/world/models/faction.py) (speed 4, population 50, technology 20, resources 50, combat_skill 20) vs [api.py:520-535](../backend/world/api.py) (speed 3, population 10, technology 5, resources 10, combat_skill 5) vs `AddFactionModal` defaults
-
-Three sources of truth for "a new faction". Harmless today but a trap. **Fix:** make the API schema defaults match the model (or drop schema defaults and let the model decide), and have `AddFactionModal` initialize from one constant.
-
----
-
-#### L3 — Frontend type unions out of sync with backend enums
-
-- **Severity:** Low
-- **File:** [frontend/src/types/index.ts:3-5](../frontend/src/types/index.ts)
-
-`ActionType` omits `'social'` and `'rest'` (both exist in the backend `Action` enum and are stored in `current_action`/`last_action`, which are typed `ActionType | null`); `PartyActionRequest` omits the `amount` field the supply action accepts ([api.py:985](../backend/world/api.py)). **Fix:** add `'social' | 'rest'` to `ActionType`; add `amount?: number` to `PartyActionRequest`.
-
----
-
-#### L4 — `duplicate_map` N+1 on knowledge re-fetch
-
-- **Severity:** Low (GM-only, rare operation)
-- **File:** [backend/world/api.py:196](../backend/world/api.py)
-
-`{k.id: Knowledge.objects.get(id=knowledge_map[k.id]) ...}` issues one query per knowledge row; the `new_k` instances were already in hand in the creation loop. **Fix:** store the instances in the first loop (`new_knowledge_by_old[k.id] = new_k`) and delete the re-fetch dict comprehension.
-
----
-
-#### L5 — `Hex.save()` fetches `self.map` and silently mutates `can_enter`
-
-- **Severity:** Low
-- **File:** [backend/world/models/hex.py save()](../backend/world/models/hex.py)
-
-Each save of a `can_enter=True` hex triggers a `Map` query (short-circuited otherwise), and the invariant is enforced only on `.save()` — `queryset.update()` paths (bulk-patch, reset) bypass it. Borderline against "models are dumb". **Fix (optional):** move the invariant into `patch_hex`/validation and drop the override, or `select_related('map')` where hexes are loaded for save-heavy paths.
-
----
-
-#### L6 — Concurrency: party/map mutations happen before the map row lock is taken
-
-- **Severity:** Low (single-GM local app)
-- **File:** [backend/world/api.py:1019-1155](../backend/world/api.py)
-
-`party_action` mutates `party` and increments `map_obj.sub_tick` before `_run_shift` takes `select_for_update()` on the map. Two simultaneous player actions could interleave sub_tick math. **Fix (cheap):** `Map.objects.select_for_update().get(...)` once at the top of `party_action` and pass it through instead of re-fetching the map 3–4 times (lines 1031, 1091, 1117, 1126, 1143 — also a readability win).
-
----
-
-#### L7 — `client.ts` sends `Content-Type: application/json` on GET/DELETE
-
-- **Severity:** Low (cosmetic; harmless with current backend)
-- **File:** [frontend/src/api/client.ts:4-7](../frontend/src/api/client.ts)
-
-**Fix (optional):** only set the header when a JSON body is present.
-
----
-
-#### L8 — `post_tick` day-mode broadcasts only the final tick number
-
-- **Severity:** Low (works — clients do a full invalidation anyway — but the two intermediate ticks emit no SSE)
-- **File:** [backend/world/api.py:781-788](../backend/world/api.py)
-
-Intentionally fine today; note only so nobody "fixes" the loop into three broadcasts without knowing clients treat any tick message as full-invalidate.
-
----
-
-#### L9 — Documentation drift: CLAUDE.md describes deleted Characters feature and stale API notes
-
-- **Severity:** Low (but actively misleading for future sessions — CLAUDE.md's own rule is to prevent exactly this)
+- **Severity:** Low, but it is exactly the failure mode CLAUDE.md exists to prevent
 - **File:** `CLAUDE.md`
 
-Stale content to remove/correct:
-- The entire **Characters** section (`Character` model, `CharactersPage`, `/map/:mapId/characters`, `GET/POST /maps/{id}/characters/`, `CharacterTick`) — deleted in migration 0030.
-- `models/characters.py` described as holding "Item, Knowledge, Character, CharacterTick" — it holds only `Knowledge`.
-- References to `tick_character` and `update_character_visibility` (including the "What's not wired up yet" bullet) — neither exists.
-- "Restless halves `comfort()`" callers description mentions per-faction disease checks in `actions.py` — still accurate, keep.
-- `_select_action` priority list — update after H2 is decided so doc and code agree.
+Stale claims found while reviewing: the wilderness table is now a **d5** (Encounter/Sign/Weather/Loss/Quiet) with a d8 weather-shift sub-roll — not the documented d6 with Environment/Exhaustion; supply and rest (not just move) roll wilderness events on regional maps; every party action **auto-locks** `player_actions_locked` (the GM header has a three-state lock with "permanent unlock"); the player action UI is the inline `ActionList` (the modal is GM-only via "Actions…"); `tracks_supplies`, `reveal_mode`/`detail_image` two-layer fog, `can_enter`/`linked_map` "Enter the city", the TickControls weather stepper, and Random Hex are undocumented; frontend test count is 116 (doc says 117); the "remaining pins: H5/H6/H7/M3/M8" line refers to pins that were all rewritten. **Fix:** superseded by the CLAUDE.md rewrite delivered alongside this review (`CLAUDE.new.md`) — adopt it or fold these corrections into the existing file.
 
-**Fix:** edit CLAUDE.md accordingly; also skim `design_docs/API.md` and `design_docs/Factions.md` for the same drift.
+---
+
+#### L2 — Stale docstring in `tests/api/conftest.py` references resolved findings
+
+- **Severity:** Low
+- **File:** [backend/world/tests/api/conftest.py:6-7](../backend/world/tests/api/conftest.py)
+
+The harness docstring still explains the `CHARACTERIZATION — pins H4/H5/H6/M3/M7/M8` convention with the old review's IDs; no live pins remain. **Fix:** reword to describe the convention generically ("when a test pins known-buggy behavior documented in design_docs/code-review.md, mark it `CHARACTERIZATION — pins <id>` …") without dead IDs.
+
+---
+
+#### L3 — Debug `console.log` leftovers
+
+- **Severity:** Low
+- **Files:** [frontend/src/pages/GMPage/GMPage.tsx:114](../frontend/src/pages/GMPage/GMPage.tsx), [frontend/src/components/HexMap/HexMap.tsx:415](../frontend/src/components/HexMap/HexMap.tsx) (fires on every render, inside the party-crown IIFE)
+
+**Fix:** delete both lines.
+
+---
+
+#### L4 — Faction `population` default drift: model 50 vs schema/UI 10
+
+- **Severity:** Low (recurrence of old L2 — three sources of truth again disagree)
+- **Files:** [backend/world/models/faction.py:37](../backend/world/models/faction.py) (`default=50`), [backend/world/api/factions.py:59](../backend/world/api/factions.py) (`population: int = 10`), [frontend/src/components/AddFactionModal/AddFactionModal.tsx:24-32](../frontend/src/components/AddFactionModal/AddFactionModal.tsx) (`DEFAULT_DRAFT.population: 10`)
+
+`population` is flavour-only now, so this is harmless — but pick one number. **Fix:** since API and UI agree on 10, change the model default to 10 (migration, no data change) — or 50 everywhere if that's the intended flavour.
+
+---
+
+#### L5 — `_perform_travel` (next_action=TRAVEL path) does not clear `destination` on arrival
+
+- **Severity:** Low (one wasted tick)
+- **File:** [backend/world/actions.py:128-145](../backend/world/actions.py) vs the rule-2 path [actions.py:174-182](../backend/world/actions.py)
+
+Rule 2 clears `destination` when `current_hex == destination`; the `next_action=TRAVEL` path checks the same condition but leaves `destination` set, so the tick after arrival re-enters rule 2 just to clear it (recording a spurious no-op). **Fix:** in `_perform_travel`, when `faction.destination and faction.current_hex == faction.destination`, clear it (matching rule 2) before falling through to wander.
+
+---
+
+#### L6 — Supply `amount` is accepted by the API but no UI sends it
+
+- **Severity:** Low **[DECISION NEEDED]**
+- **Files:** [backend/world/actions.py:433-435](../backend/world/actions.py), [backend/world/api/party.py:51](../backend/world/api/party.py) (schema), [frontend/src/components/ActionList/ActionList.tsx:106-110](../frontend/src/components/ActionList/ActionList.tsx) (sends bare `{ action }`), [frontend/src/types/index.ts](../frontend/src/types/index.ts) (`PartyActionRequest` omits `amount`)
+
+The supply action's `amount` top-up is reachable only via curl. Either (a) add an amount input to the Supply action in the shared hook/UI and add `amount?: number` to `PartyActionRequest`, or (b) delete the parameter (players adjust supplies via the GM party edit anyway). The GM `PartyFooter` supplies edit covers the need today.
+
+---
+
+#### L7 — GMPage calls a store setter during render
+
+- **Severity:** Low
+- **File:** [frontend/src/pages/GMPage/GMPage.tsx:66](../frontend/src/pages/GMPage/GMPage.tsx)
+
+`if (useGameStore.getState().selectedMapId !== id) setSelectedMapId(id);` runs in the component body — a render side effect (double-fires under StrictMode, and `setSelectedMapId` also clears `selectedHexId`). **Fix:** move into `useEffect(..., [id])`. PlayerPage doesn't set it at all — decide whether it should (deep-linking a player view leaves `selectedMapId` stale for anything reading it).
+
+---
+
+#### L8 — `TickAdmin` lists ticks from all maps with no map column or filter
+
+- **Severity:** Low
+- **File:** [backend/world/admin.py:179-182](../backend/world/admin.py)
+
+Tick numbers repeat per map (`unique_together ('map','number')`), so the changelist is ambiguous with two maps. **Fix:** `list_display = ('map', 'number', 'created_at')`, `list_filter = ('map',)`.
+
+---
+
+#### L9 — PartyAdmin fieldsets omit `player_count`, `supplies`, `tracks_supplies`, `is_lost`
+
+- **Severity:** Low
+- **File:** [backend/world/admin.py:253-266](../backend/world/admin.py)
+
+Fields added since the fieldsets were written aren't editable in admin (same mechanism as H5, lower stakes since the GM UI covers them). **Fix:** add them to the Stats fieldset (or drop the explicit fieldsets and let admin render all fields — the custom row/col form still works either way).
 
 ---
 
 ## 3. Suggested implementation order
 
-1. **C2, C1** — one-line/one-block crash fixes (verify C1 first).
-2. **C3** — after user decision (option a recommended).
-3. **M9 scaffolding** — minimal test setup, so subsequent engine fixes land with tests.
-4. **H3, M1, M2** — engine correctness with pinning tests.
-5. **H2** — after user confirms intended priority rules.
-6. **H1** — next_action dispatch.
-7. **H4, H5, H6, M3–M8** — in any order.
-8. **L1 dead-code sweep** (batch the model-touching items 1/5/7 together so the user runs migrations once), then **L2–L9**.
+1. **H2, H3, L3** — small, sharp player-facing fixes (H2/L3 frontend-only; H3 backend + frontend gate).
+2. **H5, L8, L9** — admin fieldset batch (one commit).
+3. **H1** — after the user picks semantics (a) or (b).
+4. **H4** — the migration-bearing snapshot fix (Tick.weather + PartyTick fields), then the S4 full-field regression test.
+5. **S2 + M1 + M2** — one refactor: extract the shared party-actions hook, fixing the weather and city-gating drift inside it.
+6. **M3, M4** — gallery SSE pair.
+7. **M5, M6, M7** — backend robustness batch (M5 needs the teleport decision).
+8. **S1** — `perform_party_action` decomposition (pure refactor over the pinned API tests).
+9. **S3** — events-pipeline decision, then delete or feed it.
+10. **S5, L4, L6** — type completion + defaults + amount decision.
+11. **L1, L2, L5, L7** — cleanup sweep.
 
-Migration-touching items (user must run `makemigrations`/`migrate`): H4 step 4, M8 option (a), L1 items 1, 5, 7.
-Decision-needed items: C3, H2, M8, L1 item 7.
+Migration-touching items (generate via WSL, apply via Docker, per CLAUDE.md): H4 (Tick.weather, PartyTick fields), L4 (model default).
+Decision-needed items: H1 (immobile semantics), M5 (cross-map teleport), S3 (events pipeline), L6 (supply amount), and the S6 trust-model acknowledgement.

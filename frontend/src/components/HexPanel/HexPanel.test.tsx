@@ -37,7 +37,7 @@ function makeHex(o: Partial<Hex> = {}): Hex {
 function makeFaction(o: Partial<Faction> = {}): Faction {
   return {
     id: 10, name: 'Redhand', color: '#f00', speed: 3, max_speed: 4, population: 20,
-    current_action: null, last_action: null, current_hex: 1,
+    map: 1, current_action: null, last_action: null, current_hex: 1,
     destination: null, is_mobile: true, is_dead: false, next_action: null,
     notes: '', leader: '', image: null, movement_restricted: false,
     allowed_hexes: [], ...o,
@@ -48,7 +48,7 @@ function makeParty(o: Partial<Party> = {}): Party {
   return {
     id: 9, name: 'Heroes', map: 1, player_count: 2, speed: 5, max_speed: 6,
     resource_generation: 0, supplies: 10, tracks_supplies: true, is_lost: false,
-    current_hex: 1, destination: null, current_action: null, last_action: null, ...o,
+    current_hex: 1, current_action: null, last_action: null, ...o,
   };
 }
 

@@ -5,6 +5,7 @@ from django.shortcuts import get_object_or_404
 from django.db import transaction
 
 from world.models import Map, Hex, Faction, Tick, PartyTick
+from world.models.party import Party
 from world.actions import run_shift
 
 from .common import broadcast_tick, TickEventSchema, TickResponseSchema
@@ -72,7 +73,6 @@ class FactionTickStateSchema(Schema):
 
 class PartyTickStateSchema(Schema):
     current_hex: Optional[int]
-    destination: Optional[int]
     action: Optional[str]
     last_action: Optional[str]
     notes: str
@@ -121,7 +121,6 @@ def get_tick_state(request, map_id: int, tick_number: int):
         ],
         'party_tick': {
             'current_hex': pt.current_hex_id,
-            'destination': pt.destination_id,
             'action': pt.action,
             'last_action': pt.last_action,
             'notes': pt.notes,
@@ -150,14 +149,32 @@ def reset_to_tick(request, map_id: int, tick_number: int):
     # Restore live faction state from snapshots
     for ft in tick.faction_ticks.all():
         Faction.objects.filter(id=ft.faction_id).update(
+            is_mobile=ft.is_mobile,
             speed=ft.speed,
             population=ft.population,
             current_hex_id=ft.current_hex_id,
             destination_id=ft.destination_id,
+            current_action=ft.action,
+        )
+
+    # Restore live party state from the most recent PartyTick at or before the target tick.
+    pt = (
+        PartyTick.objects
+        .filter(tick__map=map_obj, tick__number__lte=tick_number)
+        .order_by('-tick__number')
+        .first()
+    )
+    if pt is not None:
+        Party.objects.filter(map=map_obj).update(
+            current_hex_id=pt.current_hex_id,
+            current_action=pt.action,
+            last_action=pt.last_action,
         )
 
     map_obj.current_tick = tick
-    map_obj.save(update_fields=['current_tick'])
+    # City maps count sub-ticks within a shift; a reset lands on a completed shift boundary.
+    map_obj.sub_tick = 0
+    map_obj.save(update_fields=['current_tick', 'sub_tick'])
 
     transaction.on_commit(lambda: broadcast_tick(map_id, tick_number))
     return {'tick_number': tick_number}

@@ -15,6 +15,15 @@ class Action(models.TextChoices):
 
 
 class Faction(models.Model):
+    # Explicit map membership. Previously inferred from `current_hex.map`, which made
+    # a faction vanish from every list the moment its hex was cleared (M8). The map FK
+    # is now the source of truth for "which map is this faction on".
+    map = models.ForeignKey(
+        'world.Map', null=True, blank=True,
+        on_delete=models.CASCADE,
+        related_name='factions',
+    )
+
     name = models.CharField(max_length=200)
     leader = models.CharField(max_length=200, blank=True, default='')
 

@@ -15,18 +15,18 @@ class TestListFactions:
         assert resp.status_code == 200
         assert {f['name'] for f in resp.json()} == {'Orcs'}
 
-    def test_faction_without_hex_is_omitted(self, client, map_factory, hex_factory, faction_factory):
-        # CHARACTERIZATION — pins M8: map membership is inferred from current_hex,
-        # so a faction with current_hex=None vanishes from the list entirely
-        # despite still existing in the DB.
+    def test_faction_with_cleared_hex_still_listed(self, client, map_factory, hex_factory, faction_factory):
+        # M8 fixed: map membership is an explicit FK, so clearing current_hex no
+        # longer removes the faction from its map's list.
         m = map_factory()
         h = hex_factory(map=m, row=0, col=0)
         faction_factory(current_hex=h, name='Visible')
-        Faction.objects.create(name='Ghost', current_hex=None)
+        ghost = faction_factory(current_hex=h, name='Ghost')
+        ghost.current_hex = None
+        ghost.save(update_fields=['current_hex'])
         resp = client.get(f'/api/maps/{m.id}/factions/')
         names = {f['name'] for f in resp.json()}
-        assert names == {'Visible'}
-        assert Faction.objects.filter(name='Ghost').exists()
+        assert names == {'Visible', 'Ghost'}
 
     def test_list_missing_map_404(self, client):
         assert client.get('/api/maps/999999/factions/').status_code == 404

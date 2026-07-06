@@ -4,7 +4,6 @@ import {
   resetToTick,
   postTick,
   postPartyAction,
-  patchPartyTickNotes,
   patchParty,
 } from './tick';
 
@@ -28,11 +27,6 @@ describe('tick api wrappers', () => {
   it('postPartyAction POSTs the action body to the party-scoped path', () => {
     postPartyAction(9, { action: 'move', hex_id: 12 });
     expect(api.post).toHaveBeenCalledWith('/party/9/action/', { action: 'move', hex_id: 12 });
-  });
-
-  it('patchPartyTickNotes PATCHes the notes path with a JSON body (not a query param)', () => {
-    patchPartyTickNotes(9, 20, 'ambushed at dusk');
-    expect(api.patch).toHaveBeenCalledWith('/party/9/ticks/20/notes/', { notes: 'ambushed at dusk' });
   });
 
   it('patchParty PATCHes the party by id with the partial body', () => {

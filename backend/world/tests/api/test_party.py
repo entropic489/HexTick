@@ -1,4 +1,4 @@
-"""Pinning tests for the party endpoints (get, action branches, notes, supplies, patch)."""
+"""Pinning tests for the party endpoints (get, action branches, patch)."""
 import pytest
 
 from world.models import Hex, PointOfInterest, TerrainType
@@ -140,54 +140,36 @@ class TestCityMapActions:
         assert client.post(f'/api/party/{p.id}/action/', {'action': 'supply'}).status_code == 200
         assert client.post(f'/api/party/{p.id}/action/', {'action': 'rest'}).status_code == 200
 
-    def test_first_action_on_fresh_city_map_500(self, client, map_factory, hex_factory, party_factory):
-        # CHARACTERIZATION — pins a newly-observed edge bug (NOT in code-review.md):
-        # a city map's first party action is a mid-shift sub-tick (sub_tick 0->1,
-        # not a shift), so no Tick is created and map.current_tick is still None.
-        # _create_party_tick then inserts a PartyTick with tick=None ->
-        # IntegrityError -> 500. Rewrite if the app seeds an initial tick or makes
-        # PartyTick.tick nullable.
+    def test_first_action_on_fresh_city_map_seeds_tick(self, client, map_factory, hex_factory, party_factory):
+        # H7 fix: a city map's first party action is a mid-shift sub-tick with no
+        # current_tick, so the shift's Tick is seeded before the PartyTick is
+        # recorded. The action returns 200 and a PartyTick exists.
+        from world.models import PartyTick
         m = map_factory(map_type='city')
         a = hex_factory(map=m, row=0, col=0)
         p = party_factory(map=m, current_hex=a, speed=3, max_speed=5)
         resp = client.post(f'/api/party/{p.id}/action/', {'action': 'supply'})
-        assert resp.status_code == 500
+        assert resp.status_code == 200
+        assert PartyTick.objects.filter(party=p).exists()
 
 
 class TestPartyActionNoHex:
-    def test_non_move_action_without_hex_500(self, client, party_factory, map_factory):
-        # CHARACTERIZATION — pins H6: for a party with current_hex=None, map_id is
-        # never derived (party.map is ignored), so run_shift(None) raises and the
-        # request 500s. Rewrite to expect 200/400 once H6 falls back to party.map.
+    def test_non_move_action_without_hex_falls_back_to_party_map(self, client, party_factory, map_factory):
+        # H6 fix: a party with current_hex=None derives map_id from party.map, so a
+        # non-move action fires a shift and returns 200 instead of 500.
         m = map_factory()
         p = party_factory(map=m, current_hex=None)
         resp = client.post(f'/api/party/{p.id}/action/', {'action': 'rest'})
-        assert resp.status_code == 500
-
-
-class TestPartyTickNotes:
-    def test_notes_via_query_param(self, client, regional):
-        p = regional['party']
-        pt_id = client.post(f'/api/party/{p.id}/action/', {'action': 'search'}).json()['party_tick_id']
-        resp = client.patch(f'/api/party/{p.id}/ticks/{pt_id}/notes/?notes=hello')
         assert resp.status_code == 200
-        assert resp.json()['notes'] == 'hello'
 
-    def test_notes_json_body_rejected_422(self, client, regional):
-        # CHARACTERIZATION — pins M3: `notes` binds as a query param, so a JSON
-        # body (what the frontend sends) leaves it unset -> 422.
-        p = regional['party']
-        pt_id = client.post(f'/api/party/{p.id}/action/', {'action': 'search'}).json()['party_tick_id']
-        resp = client.patch(f'/api/party/{p.id}/ticks/{pt_id}/notes/', {'notes': 'hi'})
-        assert resp.status_code == 422
+    def test_non_move_action_with_no_map_returns_400(self, client, party_factory):
+        # H6: neither current_hex nor map set -> the party is not on a map -> 400.
+        p = party_factory(map=None, current_hex=None)
+        resp = client.post(f'/api/party/{p.id}/action/', {'action': 'rest'})
+        assert resp.status_code == 400
 
 
 class TestPatchParty:
-    def test_patch_supplies_endpoint_floors_negative(self, client, regional):
-        p = regional['party']
-        assert client.patch(f'/api/party/{p.id}/supplies/', {'supplies': 9}).json()['supplies'] == 9
-        assert client.patch(f'/api/party/{p.id}/supplies/', {'supplies': -3}).json()['supplies'] == 0
-
     def test_patch_party_updates_fields_and_explores_hex(self, client, regional):
         p = regional['party']
         resp = client.patch(f'/api/party/{p.id}/', {'speed': 2, 'current_hex': regional['b'].id})
